@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sadbot-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sadbot}
+      POSTGRES_USER: ${POSTGRES_USER:-sadbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - sadbot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: sadbot-backend
+    environment:
+      ADDR: ":8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-sadbot}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sadbot}?sslmode=disable
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-sadbot}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?set TOKEN_ENCRYPTION_KEY}
+      EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-90}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@sadbot.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD}
+      RUN_MIGRATIONS: "1"
+      TGSIDECAR_URL: http://tgsidecar:8000
+      TGSIDECAR_KEY: ${TGSIDECAR_KEY:?set TGSIDECAR_KEY}
+      PAYMENT_HOST_URL: ${PAYMENT_HOST_URL:-https://catroom.ir}
+      PAYMENT_CALLBACK_URL: ${PAYMENT_CALLBACK_URL:-}
+      PAYMENT_DEV_MODE: ${PAYMENT_DEV_MODE:-false}
+      PAYMENT_DEV_USERS: ${PAYMENT_DEV_USERS:-}
+      RENDERER_URL: http://renderer:8788
+      # LLM used by the content template's AI cleaning (optional; empty = raw text)
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+    depends_on:
+      db:
+        condition: service_healthy
+      tgsidecar:
+        condition: service_started
+      renderer:
+        condition: service_started
+    restart: unless-stopped
+    # no host port: only reachable via the frontend nginx
+
+  renderer:
+    build: ./renderer
+    container_name: sadbot-renderer
+    restart: unless-stopped
+    # no host port: only reachable by the backend (HTML card → PNG)
+
+  tgsidecar:
+    build: ./tgsidecar
+    container_name: sadbot-tgsidecar
+    environment:
+      TG_API_ID: ${TG_API_ID:?set TG_API_ID}
+      TG_API_HASH: ${TG_API_HASH:?set TG_API_HASH}
+      SIDECAR_KEY: ${TGSIDECAR_KEY:?set TGSIDECAR_KEY}
+      TG_SESSIONS_DIR: /data/sessions
+      # set e.g. socks5://host:port only when Telegram is blocked from this server
+      TG_PROXY: ${TG_PROXY:-}
+    volumes:
+      - tg_sessions:/data/sessions
+    restart: unless-stopped
+    # no host port: only reachable by the backend
+
+  frontend:
+    build: ./frontend
+    container_name: sadbot-frontend
+    ports:
+      # host :80 is occupied by the existing nginx (Mailu). Panel on 8085.
+      - "8085:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  sadbot_pgdata:
+  tg_sessions:

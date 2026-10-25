@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="fa">
+<head>
+<meta charset="utf-8">
+<style>
+__FONT_CSS__
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1080px; height: 1920px; overflow: hidden; }
+body {
+  font-family: 'Vazirmatn', -apple-system, sans-serif;
+  background: #0A0A0D;
+  color: #F5F6F8;
+  position: relative;
+  direction: rtl;
+}
+.glow { position: absolute; border-radius: 50%; pointer-events: none; }
+.glow-a {
+  top: -220px; left: -180px; width: 780px; height: 780px;
+  background: radial-gradient(circle, __GLOW_A__ 0%, transparent 70%);
+}
+.glow-b {
+  bottom: -260px; right: -200px; width: 700px; height: 700px;
+  background: radial-gradient(circle, __GLOW_B__ 0%, transparent 70%);
+}
+.glow-c {
+  top: 42%; left: -200px; width: 520px; height: 520px;
+  background: radial-gradient(circle, __GLOW_C__ 0%, transparent 70%);
+}
+.grid {
+  position: absolute; inset: 0; opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 54px 54px;
+  -webkit-mask-image: radial-gradient(60% 45% at 30% 15%, black 20%, transparent 75%);
+  mask-image: radial-gradient(60% 45% at 30% 15%, black 20%, transparent 75%);
+}
+.frame {
+  position: relative; z-index: 2;
+  height: 1920px; width: 1080px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 300px 72px 280px;
+}
+.brand {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  margin-top: 20px;
+}
+.brand .name-en {
+  font-family: -apple-system, 'SF Pro Display', sans-serif;
+  font-weight: 700; font-size: 44px; letter-spacing: -0.02em; direction: ltr;
+  background: linear-gradient(120deg, #F5F6F8 25%, #3B6BE0 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.brand .name-fa {
+  font-weight: 800; font-size: 40px; color: #9297A3;
+}
+.card {
+  background: rgba(255,255,255,0.035);
+  border: none;
+  border-radius: 26px;
+  backdrop-filter: blur(20px);
+  padding: 52px 48px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.4);
+  overflow: hidden;
+  max-height: 980px;
+}
+.card.has-image { padding: 24px; max-height: 1120px; }
+.media-wrap {
+  border-radius: 20px; overflow: hidden; margin-bottom: 36px;
+  border: none;
+  background: #0F0F13;
+  display: flex; align-items: center; justify-content: center;
+  max-height: 560px;
+  flex-shrink: 0;
+}
+.media-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; max-height: 560px; }
+.body-text {
+  font-weight: 600; line-height: 1.85; color: #F5F6F8;
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  text-align: right;
+  font-size: 54px;
+  overflow: hidden;
+  max-height: 680px;
+}
+.card.has-image .body-text { font-size: 38px; max-height: 380px; }
+.card.solo .body-text { font-size: 58px; max-height: 680px; }
+.num {
+  font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  direction: ltr; unicode-bidi: isolate;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: __ACCENT__;
+}
+.footer { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.handle {
+  font-family: -apple-system, 'SF Pro Text', sans-serif;
+  direction: ltr; font-size: 28px; font-weight: 600; color: #9297A3;
+}
+.date {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  direction: ltr; font-size: 24px; color: #5E6169;
+}
+.cta {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: linear-gradient(120deg, #1C51C5 0%, #3B6BE0 55%, #C83CD4 130%);
+  color: #fff; border-radius: 999px; padding: 22px 44px;
+  font-size: 30px; font-weight: 800;
+  box-shadow: 0 10px 40px rgba(28,81,197,0.45);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: rgba(28,81,197,0.18); border: 1px solid rgba(59,107,224,0.45);
+  color: #3B6BE0; border-radius: 999px; padding: 12px 22px;
+  font-size: 24px; font-weight: 700; margin-bottom: 28px;
+}
+.pill .dot {
+  width: 10px; height: 10px; border-radius: 50%; background: #22C55E;
+  box-shadow: 0 0 10px rgba(34,197,94,0.8);
+}
+.follow-note {
+  margin-top: 30px;
+  font-size: 26px; font-weight: 600; color: #9297A3;
+  text-align: center; line-height: 1.7;
+}
+.follow-note b { color: #F5F6F8; font-weight: 800; }
+</style>
+</head>
+<body>
+  <div class="glow glow-a"></div>
+  <div class="glow glow-b"></div>
+  <div class="glow glow-c"></div>
+  <div class="grid"></div>
+
+  <div class="frame">
+    <div class="brand">
+      <div class="name-en">__BRAND_EN__</div>
+      <div class="name-fa">__BRAND_FA__</div>
+    </div>
+
+    <div class="card __CARD_CLASS__">
+      <div class="pill"><span class="dot"></span> بازار · تحلیل</div>
+      __MEDIA__
+      <div class="body-text __TEXT_CLASS__" id="bodyText" style="__TEXT_STYLE__">__TEXT__</div>
+    </div>
+
+    <div class="follow-note">برای اخبار بازار <b>ارز</b>، <b>دلار</b> و <b>کریپتو</b> ما را فالو کنید</div>
+
+    <div>
+      <div class="footer">
+        <div class="handle">__HANDLE__</div>
+      </div>
+      <div style="display:flex;justify-content:flex-start;">
+        <div class="cta">دنبال کنید <span style="direction:ltr">↗</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var el = document.getElementById('bodyText');
+      if (!el) return;
+      var t = el.textContent;
+      // ارقام فارسی → لاتین، سپس هایلایت عددی
+      t = t.replace(/[۰-۹]/g, function (d) {
+        return '۰۱۲۳۴۵۶۷۸۹'.indexOf(d);
+      });
+      t = t.replace(/[٠-٩]/g, function (d) {
+        return '٠١٢٣٤٥٦٧٨٩'.indexOf(d);
+      });
+      var re = /([0-9][0-9.,:،%$KMkmBb+×÷=*/−-]{1,})/g;
+      el.innerHTML = t.replace(re, '<span class="num">$1</span>');
+    })();
+  </script>
+</body>
+</html>

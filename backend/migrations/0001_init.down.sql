@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS dating_block_pairs;
+DROP TABLE IF EXISTS dating_pending_rates;
+DROP TABLE IF EXISTS dating_msg_refs;
+DROP TABLE IF EXISTS dating_search_requests;
+DROP TABLE IF EXISTS dating_profiles;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS subscriptions;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS bot_user_events;
+DROP TABLE IF EXISTS bot_end_users;
+DROP TABLE IF EXISTS bot_configs;
+DROP TABLE IF EXISTS admin_bot_access;
+DROP TABLE IF EXISTS bots;
+DROP TABLE IF EXISTS admins;

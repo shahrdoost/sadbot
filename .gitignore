@@ -1,0 +1,53 @@
+# Build artifacts
+*.exe
+*.test
+*.out
+/dist/
+/build/
+node_modules/
+__pycache__/
+*.pyc
+
+# Environment and secrets
+.env
+.env.local
+*.session
+*.session-journal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sql.gz
+*.dump
+
+# Temporary
+/tmp/
+scratchpad/*.session
+tools/tgclient/*.session
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Go
+backend/bin/
+backend/vendor/
+.claude/
+renderer/.venv/
+*.tar.gz
+migration/*.json
+tools/tgclient/phone_code_hash.txt
