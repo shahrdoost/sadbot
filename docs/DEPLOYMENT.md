@@ -1,6 +1,6 @@
 # دیپلوی و عملیات
 
-> تاریخ: ۲۰۲۶-۱۰-۲۰ — production واقعی: سرور `212.87.199.140`
+> تاریخ: ۲۰۲۶-۱۰-۲۵ — production واقعی: سرور `212.87.199.140`
 
 ## ۱. دیپلوی production (سرور صدبات)
 
@@ -104,7 +104,23 @@ cd /opt/sadbot && bash deploy/deploy.sh
 
 **آدرس پنل**: `http://212.87.199.140:8085` — قبلاً: `https://sadbot.tfess.co.ir`
 
-**بات‌ها بعد از deploy** (از ۲۰۲۶-۱۰-۱۸): دیگر استارت دستی لازم نیست — `StopAll` هنگام shutdown فقط context را کنسل میکند و `status` دیتابیس را دست نمیزند؛ پس بوت بعدی `StartRunningBots` همهٔ بات‌های `running` را خودش بالا میآورد. (قبلاً هر deploy همهٔ بات‌ها را `stopped` میکرد — باگ فلَت کردن کل فرست از این رفع شد.) اگر بعد از deploy باتی مرده بود: `docker logs sadbot-backend | grep runtime` و `SELECT telegram_username, status FROM bots;` را چک کنید؛ در صورت نیاز `UPDATE bots SET status='running'` + ری‌استارت backend.
+**بات‌ها بعد از deploy** (از ۲۰۲۶-۱۰-۱۸): دیگر استارت دستی لازم نیست — `StopAll` هنگام shutdown فقط context را کنسل میکند و `status` دیتابیس را دست نمیزند؛ پس بوت بعدی `StartRunningBots` همهٔ بات‌های `running` را خودش بالا میآورد. اگر بعد از deploy باتی مرده بود: `docker logs sadbot-backend | grep runtime` و `SELECT telegram_username, status FROM bots;` را چک کنید؛ در صورت نیاز `UPDATE bots SET status='running'` + ری‌استارت backend.
+
+**بات‌های فعال در production** (۲۰۲۶-۱۰-۲۵):
+
+| بات | یوزرنیم | قالب |
+|---|---|---|
+| آشنا | @ashnadbot | dating |
+| آقای تریدر | @mrtradeaibot_bot | content |
+| بات محتوا وی‌پی‌ان | @batmhtvavipian_bot | content |
+| کارخانه بومبلند | @bombland_factory_bot_bot | bombland |
+| سنگ کاغذ قیچی | @rps_duel_game_bot_bot | duel |
+| بازی فراوانی | @favaani_game_bot_bot | favaani |
+| لینک‌ساز | @shlinks_shortener_botbot | shlinks |
+| کی منو دیده | @whoseemee_bot | whoseeme |
+| چت ناشناس | @anonychatg_bot | anonychat |
+| تپ‌کلیک | @tapearnc_bot | tapearn |
+| فال روزانه | @faal_bakht_bot | faal |
 
 **نکات اجرایی ثبت‌شده**:
 - خروجی rsync را **بیرون از پایپ** چک کنید (خطای گذرا SSH ممکن است در لوله پنهان شود و deploy روی کد قدیمی برود)؛ قبل از `deploy.sh` وجود فایلهای جدید روی سرور را grep بزنید — و بعد از build داخل خود کانتینر هم verify کنید: `docker exec sadbot-backend strings /app/sadbot | grep <نماد_جدید>`.
