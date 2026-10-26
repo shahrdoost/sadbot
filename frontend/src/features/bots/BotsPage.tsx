@@ -52,6 +52,7 @@ export default function BotsPage() {
   const [mode, setMode] = useState<'account' | 'token'>('account')
   const [name, setName] = useState('')
   const [token, setToken] = useState('')
+  const [katToken, setKatToken] = useState('')
   const [templateKey, setTemplateKey] = useState('welcome_menu')
   const [accountId, setAccountId] = useState('')
   const [usernameHint, setUsernameHint] = useState('')
@@ -59,6 +60,7 @@ export default function BotsPage() {
   const resetForm = () => {
     setName('')
     setToken('')
+    setKatToken('')
     setUsernameHint('')
     setAccountId('')
   }
@@ -82,7 +84,7 @@ export default function BotsPage() {
           username_hint: usernameHint || undefined,
         }).unwrap()
       } else {
-        await createBot({ name, token, template_key: templateKey }).unwrap()
+        await createBot({ name, token, kat_token: katToken || undefined, template_key: templateKey }).unwrap()
       }
       setShowCreate(false)
       resetForm()
@@ -199,6 +201,18 @@ export default function BotsPage() {
                 />
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   توکن از @BotFather — قبل از ذخیره با تلگرام اعتبارسنجی می‌شود.
+                </p>
+                <label htmlFor="bot-kat-token" className="block text-sm font-medium mb-1 mt-3">توکن کت (اختیاری)</label>
+                <input
+                  id="bot-kat-token"
+                  className="input font-mono"
+                  dir="ltr"
+                  placeholder="1780243332:AA..."
+                  value={katToken}
+                  onChange={(e) => setKatToken(e.target.value)}
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  دوقلوی کتِ همین بات — با همان دیتا و قالب روی cr0.ir هم سرویس می‌دهد.
                 </p>
               </div>
             )}

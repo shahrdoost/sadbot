@@ -30,7 +30,7 @@ func TestProfilePageAndFullEdit(t *testing.T) {
 	// 2) gender edit (first profile edit is free) persists + stamps cooldown
 	e.feedCB(t, e.sendA, "act:edit:gender")
 	e.feed(t, e.sendA, "خانومم")
-	p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if err != nil {
 		t.Fatalf("profile: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestProfilePageAndFullEdit(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "🔒") {
 		t.Fatalf("expected cooldown refusal, got %#v", msg)
 	}
-	p, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if p.Coins != coinsBefore {
 		t.Fatalf("cooldown must not charge: coins %d → %d", coinsBefore, p.Coins)
 	}
@@ -57,7 +57,7 @@ func TestProfilePageAndFullEdit(t *testing.T) {
 	e.feedCB(t, e.sendA, "act:int:toggle:0") // موسیقی
 	e.feedCB(t, e.sendA, "act:int:toggle:2") // کتاب
 	e.feedCB(t, e.sendA, "act:int:save")
-	p, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if len(p.Interests) != 2 || p.Interests[0] != "موسیقی" || p.Interests[1] != "کتاب" {
 		t.Fatalf("interests = %v, want [موسیقی کتاب]", p.Interests)
 	}
@@ -79,7 +79,7 @@ func TestProfilePageAndFullEdit(t *testing.T) {
 	e2.feed(t, e2.sendB, "⏭ رد شد")
 	e2.feedCB(t, e2.sendB, "act:edit:photo")
 	e2.feedPhoto(t, e2.sendB, "new-avatar-file-id")
-	p2, err := e2.store.ProfileByTelegram(ctx, e2.botID, 222)
+	p2, err := e2.store.ProfileByTelegram(ctx, e2.botID, "", 222)
 	if err != nil {
 		t.Fatalf("profile b: %v", err)
 	}

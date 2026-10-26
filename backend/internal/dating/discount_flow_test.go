@@ -114,7 +114,7 @@ func TestDiscountBotFlow(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "کد تخفیف فعال") {
 		t.Fatalf("wallet must show active code: %+v", e.sendA.sent)
 	}
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	state, _ := e.users.GetState(ctx, e.botID.String(), pA.UserID)
 	if !contains(string(state), "WELCOME10") {
 		t.Fatalf("state must store the code: %s", state)

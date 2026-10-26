@@ -67,7 +67,7 @@ func TestMultiChannelMissionFlow(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "عضو همه کانال‌ها نیستی") {
 		t.Fatalf("partial membership must reject: %+v", e.sendA.sent)
 	}
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 5 || pA.ChannelBonusAt != nil {
 		t.Fatalf("no bonus on partial membership: coins=%d bonus=%v", pA.Coins, pA.ChannelBonusAt)
 	}
@@ -78,7 +78,7 @@ func TestMultiChannelMissionFlow(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "عضویت کانال‌ها تایید شد") || !contains(msg.Text, "+12 سکه") {
 		t.Fatalf("full membership must confirm: %+v", e.sendA.sent)
 	}
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 17 || pA.ChannelBonusAt == nil { // 5 signup + 12 bonus
 		t.Fatalf("bonus must be paid once: coins=%d bonus=%v", pA.Coins, pA.ChannelBonusAt)
 	}
@@ -88,7 +88,7 @@ func TestMultiChannelMissionFlow(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "قبلاً عضویت کانال رو انجام دادی") {
 		t.Fatalf("repeat must be idempotent: %+v", e.sendA.sent)
 	}
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 17 {
 		t.Fatalf("repeat must not pay again: coins=%d", pA.Coins)
 	}
@@ -114,8 +114,8 @@ func TestOneSidedSuperlikeNotifiesRecipient(t *testing.T) {
 
 	e.feedCB(t, e.sendA, "act:browse:super")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if pA.Coins != 2 { // 5 signup - 3 superlike
 		t.Fatalf("superlike must cost 3 coins, got %d", pA.Coins)
 	}
@@ -145,7 +145,7 @@ func TestUserCardsWithoutDatingProfile(t *testing.T) {
 	ctx := context.Background()
 
 	// user with no dating profile row at all
-	u, err := e.users.Upsert(ctx, e.botID.String(), 999, nil, strPtrTest("بی‌پروفایل"), nil)
+	u, err := e.users.Upsert(ctx, e.botID.String(), "telegram", 999, nil, strPtrTest("بی‌پروفایل"), nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}

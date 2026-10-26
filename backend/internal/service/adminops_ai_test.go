@@ -59,7 +59,7 @@ func TestAIHarnessAndToggle(t *testing.T) {
 		state []byte
 		name  string
 	}{{331, aiState, "علی"}, {332, aiState, "رضا"}, {333, homeState, "مریم"}} {
-		u, err := userRepo.Upsert(ctx, bot.ID, tc.tid, nil, strPtr(tc.name), nil)
+		u, err := userRepo.Upsert(ctx, bot.ID, "telegram", tc.tid, nil, strPtr(tc.name), nil)
 		if err != nil {
 			t.Fatalf("upsert: %v", err)
 		}

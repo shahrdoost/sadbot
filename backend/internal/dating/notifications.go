@@ -77,7 +77,7 @@ func (n *NotificationService) sendBot(ctx context.Context, botID uuid.UUID) {
 	var sent []int64
 	for _, user := range rows {
 		text := notificationText()
-		if err := n.notify(botID, user.TelegramID, text, notificationKeyboard()); err != nil {
+		if err := n.notify(botID, user.Platform, user.TelegramID, text, notificationKeyboard()); err != nil {
 			log.Printf("[notifications] send %d: %v", user.TelegramID, err)
 			continue
 		}

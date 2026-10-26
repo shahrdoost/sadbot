@@ -167,16 +167,20 @@ func main() {
 	eng.SetData("moderationRepo", moderationRepo)
 
 	runtimeMgr := runtime.NewManager(eng, botRepo, userRepo, botRepo)
-	runtime.ConfigureTokenDecryptor(func(b *domain.Bot) (string, error) {
+	runtime.ConfigureTokenDecryptor(func(b *domain.Bot, platform string) (string, error) {
+		if platform == domain.PlatformKat {
+			return pgcrypto.DecryptToken(cfg.TokenEncryptionKey, b.KatTokenEncrypted)
+		}
 		return pgcrypto.DecryptToken(cfg.TokenEncryptionKey, b.TokenEncrypted)
 	})
+	eng.SetRouter(runtimeMgr)
 
 	// global matcher (5s tick + search timeout sweep + ghost injection)
 	matcher := datingpkg.NewMatcher(datingStore, botRepo,
-		func(botID uuid.UUID, chatID int64, text string, kbd json.RawMessage) error {
-			client, ok := runtimeMgr.ClientFor(botID)
+		func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
+			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
 			if !ok {
-				return nil // bot not running; notifications skipped
+				return nil // bot/platform not running; notifications skipped
 			}
 			_, err := client.SendMessage(ctx, telegram.SendMessagePayload{
 				ChatID: chatID, Text: text, ReplyMarkup: kbd,
@@ -196,8 +200,8 @@ func main() {
 
 	// re-engagement notifications (30m tick, hard caps 2/day + 8h gap + night quiet)
 	go datingpkg.NewNotificationService(datingStore, botRepo,
-		func(botID uuid.UUID, chatID int64, text string, kbd json.RawMessage) error {
-			client, ok := runtimeMgr.ClientFor(botID)
+		func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
+			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
 			if !ok {
 				return nil
 			}
@@ -236,8 +240,8 @@ func main() {
 	eng.SetData("discountRepo", discountRepo)
 	broadcastRepo := postgres.NewBroadcastRepo(pool)
 	broadcastSvc := service.NewBroadcastService(broadcastRepo,
-		func(c context.Context, botID uuid.UUID, chatID int64, text, photo, footer string) error {
-			client, ok := runtimeMgr.ClientFor(botID)
+		func(c context.Context, botID uuid.UUID, platform string, chatID int64, text, photo, footer string) error {
+			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
 			if !ok {
 				return nil
 			}
@@ -341,7 +345,7 @@ func main() {
 		if err != nil || u == nil {
 			return err
 		}
-		client, ok := runtimeMgr.ClientFor(botID)
+		client, ok := runtimeMgr.ClientForPlatform(botID, u.Platform)
 		if !ok {
 			return nil
 		}
@@ -376,8 +380,8 @@ func main() {
 
 	// panel-driven per-user admin actions (coins, reset, block, stuck scan)
 	adminOpsSvc := service.NewAdminOpsService(datingRepo, userRepo, auditRepo, configRepo,
-		func(c context.Context, botID uuid.UUID, telegramID int64, text string) error {
-			client, ok := runtimeMgr.ClientFor(botID)
+		func(c context.Context, botID uuid.UUID, platform string, telegramID int64, text string) error {
+			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
 			if !ok {
 				return errors.New("bot not running")
 			}
@@ -439,7 +443,7 @@ func (n *runtimeNotifier) NotifyUser(botID uuid.UUID, userID int64, text string)
 	if err != nil || u == nil {
 		return
 	}
-	client, ok := n.mgr.ClientFor(botID)
+	client, ok := n.mgr.ClientForPlatform(botID, u.Platform)
 	if !ok {
 		return
 	}

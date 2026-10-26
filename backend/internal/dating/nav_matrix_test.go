@@ -21,7 +21,7 @@ func TestHomeNavFromEveryScene(t *testing.T) {
 	e.feed(t, e.sendB, "⏭ رد شد")
 
 	stateOf := func() map[string]any {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return nil
 		}
@@ -110,7 +110,7 @@ func TestHomeNavFromInlineOnlyScenes(t *testing.T) {
 	e.feed(t, e.sendA, "⏭ رد شد")
 
 	stateOf := func() map[string]any {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return nil
 		}
@@ -244,7 +244,7 @@ func TestEditPhotoPromptEscapesHome(t *testing.T) {
 	e.feed(t, e.sendA, "⏭ رد شد")
 
 	stateOf := func() map[string]any {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return nil
 		}
@@ -277,7 +277,7 @@ func TestEditPhotoPromptEscapesHome(t *testing.T) {
 	if scene() != "home" {
 		t.Fatalf("home escape from editphoto failed, scene = %q", scene())
 	}
-	p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if err != nil {
 		t.Fatalf("profile: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestHomeNavFromAdvSearchWizard(t *testing.T) {
 	e.feed(t, e.sendA, "⏭ رد شد")
 
 	stepOf := func() string {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return ""
 		}
@@ -389,7 +389,7 @@ func TestHomeNavFromEditPrompts(t *testing.T) {
 	e.feed(t, e.sendA, "⏭ رد شد")
 
 	sceneStep := func() (string, string) {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return "", ""
 		}
@@ -415,7 +415,7 @@ func TestHomeNavFromEditPrompts(t *testing.T) {
 	if sc, _ := sceneStep(); sc != "home" {
 		t.Fatalf("home label in name prompt must escape, scene = %q", sc)
 	}
-	p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if err != nil {
 		t.Fatalf("profile: %v", err)
 	}

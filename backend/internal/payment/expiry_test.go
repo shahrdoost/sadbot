@@ -52,7 +52,7 @@ func TestSweeperExpiresOnce(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = botRepo.Delete(ctx, bot.ID) })
 
-	user, err := userRepo.Upsert(ctx, bot.ID, 777000111, nil, strPtr("Payer"), nil)
+	user, err := userRepo.Upsert(ctx, bot.ID, "telegram", 777000111, nil, strPtr("Payer"), nil)
 	if err != nil {
 		t.Fatalf("user: %v", err)
 	}

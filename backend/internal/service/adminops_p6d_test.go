@@ -47,15 +47,15 @@ func TestTelegramBlockScanAndBlockPairs(t *testing.T) {
 	t.Cleanup(func() { _ = botRepo.Delete(ctx, bot.ID) })
 
 	// two inactive users + one recently active (must not be probed)
-	uReach, err := userRepo.Upsert(ctx, bot.ID, 551, nil, strPtr("رسان"), nil)
+	uReach, err := userRepo.Upsert(ctx, bot.ID, "telegram", 551, nil, strPtr("رسان"), nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	uBlocked, err := userRepo.Upsert(ctx, bot.ID, 552, nil, strPtr("بلاکر"), nil)
+	uBlocked, err := userRepo.Upsert(ctx, bot.ID, "telegram", 552, nil, strPtr("بلاکر"), nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if _, err := userRepo.Upsert(ctx, bot.ID, 553, nil, strPtr("فعال"), nil); err != nil {
+	if _, err := userRepo.Upsert(ctx, bot.ID, "telegram", 553, nil, strPtr("فعال"), nil); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -66,10 +66,10 @@ func TestTelegramBlockScanAndBlockPairs(t *testing.T) {
 
 	// dating profiles (with names) so block-pairs can show them
 	store := datingRepo
-	if _, err := store.EnsureProfile(ctx, bot.ID, uReach.ID, 551); err != nil {
+	if _, err := store.EnsureProfile(ctx, bot.ID, uReach.ID, "telegram", 551); err != nil {
 		t.Fatalf("profile reach: %v", err)
 	}
-	if _, err := store.EnsureProfile(ctx, bot.ID, uBlocked.ID, 552); err != nil {
+	if _, err := store.EnsureProfile(ctx, bot.ID, uBlocked.ID, "telegram", 552); err != nil {
 		t.Fatalf("profile blocked: %v", err)
 	}
 	if _, err := store.UpdateProfile(ctx, bot.ID, uReach.ID, postgres.ProfileUpdate{Name: strPtr("رسان")}); err != nil {
@@ -82,7 +82,7 @@ func TestTelegramBlockScanAndBlockPairs(t *testing.T) {
 	// notify fake: 551 succeeds, 552 answers 403 (user blocked the bot)
 	var mu sync.Mutex
 	var probed []int64
-	notify := func(_ context.Context, _ uuid.UUID, telegramID int64, _ string) error {
+	notify := func(_ context.Context, _ uuid.UUID, _ string, telegramID int64, _ string) error {
 		mu.Lock()
 		probed = append(probed, telegramID)
 		mu.Unlock()
@@ -112,7 +112,7 @@ func TestTelegramBlockScanAndBlockPairs(t *testing.T) {
 	}
 
 	// 552 is now marked blocked → excluded from the broadcast audience
-	u, err := userRepo.GetByTelegramID(ctx, bot.ID, 552)
+	u, err := userRepo.GetByTelegramID(ctx, bot.ID, "", 552)
 	if err != nil || !u.IsBlocked {
 		t.Fatalf("user 552 should be is_blocked=true (err=%v blocked=%v)", err, u.IsBlocked)
 	}
@@ -168,13 +168,13 @@ func TestBroadcastWithPhotoFooter(t *testing.T) {
 		t.Fatalf("bot: %v", err)
 	}
 	t.Cleanup(func() { _ = botRepo.Delete(ctx, bot.ID) })
-	if _, err := userRepo.Upsert(ctx, bot.ID, 661, nil, strPtr("گیرنده"), nil); err != nil {
+	if _, err := userRepo.Upsert(ctx, bot.ID, "telegram", 661, nil, strPtr("گیرنده"), nil); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
 	var mu sync.Mutex
 	var gotPhotos, gotFooters, gotTexts []string
-	send := func(_ context.Context, _ uuid.UUID, _ int64, text, photo, footer string) error {
+	send := func(_ context.Context, _ uuid.UUID, _ string, _ int64, text, photo, footer string) error {
 		mu.Lock()
 		gotTexts = append(gotTexts, text)
 		gotPhotos = append(gotPhotos, photo)

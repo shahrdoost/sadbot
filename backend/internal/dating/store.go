@@ -34,16 +34,18 @@ func (s *Store) SetScene(ctx context.Context, botID string, userID int64, scene 
 func (s *Store) Repo() *postgres.DatingRepo { return s.dating }
 
 // EnsureProfile creates the dating profile row if missing.
-func (s *Store) EnsureProfile(ctx context.Context, botID uuid.UUID, userID, telegramID int64) (*domain.DatingProfile, error) {
-	return s.dating.EnsureProfile(ctx, botID, userID, telegramID)
+func (s *Store) EnsureProfile(ctx context.Context, botID uuid.UUID, userID int64, platform string, telegramID int64) (*domain.DatingProfile, error) {
+	return s.dating.EnsureProfile(ctx, botID, userID, platform, telegramID)
 }
 
 func (s *Store) Profile(ctx context.Context, botID uuid.UUID, userID int64) (*domain.DatingProfile, error) {
 	return s.dating.GetProfile(ctx, botID, userID)
 }
 
-func (s *Store) ProfileByTelegram(ctx context.Context, botID uuid.UUID, telegramID int64) (*domain.DatingProfile, error) {
-	return s.dating.GetProfileByTelegramID(ctx, botID, telegramID)
+// ProfileByTelegram resolves a profile by chat address. Pass platform "" to
+// search on any platform (e.g. legacy ref_<id> links carry no platform).
+func (s *Store) ProfileByTelegram(ctx context.Context, botID uuid.UUID, platform string, telegramID int64) (*domain.DatingProfile, error) {
+	return s.dating.GetProfileByTelegramID(ctx, botID, platform, telegramID)
 }
 
 // IsProfileComplete reports whether onboarding finished (kpkchat fields).
@@ -179,6 +181,7 @@ func (s *Store) ResolveReply(ctx context.Context, botID uuid.UUID, viewerUserID,
 // Searcher is a searching user joined with their telegram chat id.
 type Searcher struct {
 	UserID          int64
+	Platform        string
 	TelegramID      int64
 	Gender          string
 	Province        string
@@ -203,7 +206,7 @@ func (s *Store) LoadSearchers(ctx context.Context, botID uuid.UUID) ([]Searcher,
 	out := make([]Searcher, 0, len(rows))
 	for _, r := range rows {
 		sr := Searcher{
-			UserID: r.UserID, TelegramID: r.TelegramID,
+			UserID: r.UserID, Platform: r.Platform, TelegramID: r.TelegramID,
 			Interests: r.Interests, Filter: r.Filter,
 			ProvinceFilter: r.ProvinceFilter, CityFilter: r.CityFilter,
 			InterestsFilter: r.InterestsFilter,

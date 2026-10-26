@@ -15,7 +15,7 @@ import (
 // Telegram file_id or an https URL (both accepted by the Bot API photo field);
 // footer is the text under the photo caption. When photo is empty only text
 // is sent and footer is ignored.
-type BroadcastSender func(ctx context.Context, botID uuid.UUID, chatID int64, text, photo, footer string) error
+type BroadcastSender func(ctx context.Context, botID uuid.UUID, platform string, chatID int64, text, photo, footer string) error
 
 // BroadcastService runs panel/telegram broadcasts in batches (kpkchat
 // admin-ops parity: batches of 15 with pacing, sent/failed counters).
@@ -77,7 +77,7 @@ func (s *BroadcastService) execute(run postgres.BroadcastRun) {
 			break
 		}
 		for _, u := range page {
-			if err := s.send(ctx, run.BotID, u.TelegramID, run.Text, photo, footer); err != nil {
+			if err := s.send(ctx, run.BotID, u.Platform, u.TelegramID, run.Text, photo, footer); err != nil {
 				failed++
 			} else {
 				sent++

@@ -20,24 +20,24 @@ type DatingRepo struct {
 
 func NewDatingRepo(db *pgxpool.Pool) *DatingRepo { return &DatingRepo{db: db} }
 
-const datingCols = `bot_id, user_id, telegram_id, name, gender, age, province, city, interests, status, partner_user_id, rating, total_ratings, rating_sum, last_seen_at, coins, channel_bonus_at, photo_file_id, avatar_bonus_at, is_ghost, ghost_persona, ai_free_used, last_notified_at, notify_sent_on, notify_count_on, notify_dismissed_at, streak_count, streak_best, streak_last_date, boosted_until, name_edited_at, profile_edited_at`
+const datingCols = `bot_id, user_id, platform, telegram_id, name, gender, age, province, city, interests, status, partner_user_id, rating, total_ratings, rating_sum, last_seen_at, coins, channel_bonus_at, photo_file_id, avatar_bonus_at, is_ghost, ghost_persona, ai_free_used, last_notified_at, notify_sent_on, notify_count_on, notify_dismissed_at, streak_count, streak_best, streak_last_date, boosted_until, name_edited_at, profile_edited_at`
 
 func scanDating(row pgx.Row) (*domain.DatingProfile, error) {
 	p := &domain.DatingProfile{}
-	err := row.Scan(&p.BotID, &p.UserID, &p.TelegramID, &p.Name, &p.Gender, &p.Age, &p.Province, &p.City, &p.Interests, &p.Status, &p.PartnerUserID, &p.Rating, &p.TotalRatings, &p.RatingSum, &p.LastSeenAt, &p.Coins, &p.ChannelBonusAt, &p.PhotoFileID, &p.AvatarBonusAt, &p.IsGhost, &p.GhostPersona, &p.AIFreeUsed, &p.LastNotifiedAt, &p.NotifySentOn, &p.NotifyCountOn, &p.NotifyDismissedAt, &p.StreakCount, &p.StreakBest, &p.StreakLastDate, &p.BoostedUntil, &p.NameEditedAt, &p.ProfileEditedAt)
+	err := row.Scan(&p.BotID, &p.UserID, &p.Platform, &p.TelegramID, &p.Name, &p.Gender, &p.Age, &p.Province, &p.City, &p.Interests, &p.Status, &p.PartnerUserID, &p.Rating, &p.TotalRatings, &p.RatingSum, &p.LastSeenAt, &p.Coins, &p.ChannelBonusAt, &p.PhotoFileID, &p.AvatarBonusAt, &p.IsGhost, &p.GhostPersona, &p.AIFreeUsed, &p.LastNotifiedAt, &p.NotifySentOn, &p.NotifyCountOn, &p.NotifyDismissedAt, &p.StreakCount, &p.StreakBest, &p.StreakLastDate, &p.BoostedUntil, &p.NameEditedAt, &p.ProfileEditedAt)
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func (r *DatingRepo) EnsureProfile(ctx context.Context, botID uuid.UUID, userID, telegramID int64) (*domain.DatingProfile, error) {
+func (r *DatingRepo) EnsureProfile(ctx context.Context, botID uuid.UUID, userID int64, platform string, telegramID int64) (*domain.DatingProfile, error) {
 	return scanDating(r.db.QueryRow(ctx, `
-		INSERT INTO dating_profiles (bot_id, user_id, telegram_id)
-		VALUES ($1, $2, $3)
+		INSERT INTO dating_profiles (bot_id, user_id, platform, telegram_id)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (bot_id, user_id) DO UPDATE SET last_seen_at = now()
 		RETURNING `+datingCols,
-		botID, userID, telegramID))
+		botID, userID, platform, telegramID))
 }
 
 func (r *DatingRepo) GetProfile(ctx context.Context, botID uuid.UUID, userID int64) (*domain.DatingProfile, error) {
@@ -48,8 +48,17 @@ func (r *DatingRepo) GetProfile(ctx context.Context, botID uuid.UUID, userID int
 	return p, err
 }
 
-func (r *DatingRepo) GetProfileByTelegramID(ctx context.Context, botID uuid.UUID, telegramID int64) (*domain.DatingProfile, error) {
-	p, err := scanDating(r.db.QueryRow(ctx, `SELECT `+datingCols+` FROM dating_profiles WHERE bot_id = $1 AND telegram_id = $2`, botID, telegramID))
+// GetProfileByTelegramID resolves a profile by its chat address. Pass
+// platform "" to match on any platform (panel lookups); bot-flow callers
+// should pass bc.Platform since ids can collide across platforms.
+func (r *DatingRepo) GetProfileByTelegramID(ctx context.Context, botID uuid.UUID, platform string, telegramID int64) (*domain.DatingProfile, error) {
+	var row pgx.Row
+	if platform != "" {
+		row = r.db.QueryRow(ctx, `SELECT `+datingCols+` FROM dating_profiles WHERE bot_id = $1 AND platform = $3 AND telegram_id = $2`, botID, telegramID, platform)
+	} else {
+		row = r.db.QueryRow(ctx, `SELECT `+datingCols+` FROM dating_profiles WHERE bot_id = $1 AND telegram_id = $2`, botID, telegramID)
+	}
+	p, err := scanDating(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("dating profile not found")
 	}
@@ -280,6 +289,7 @@ func (r *DatingRepo) IsBlocked(ctx context.Context, botID uuid.UUID, a, b int64)
 // DatingSearchRow is a searching user joined with their chat id (for the matcher).
 type DatingSearchRow struct {
 	UserID     int64
+	Platform   string
 	TelegramID int64
 	Gender     *string
 	Province         *string
@@ -297,7 +307,7 @@ type DatingSearchRow struct {
 
 func (r *DatingRepo) Searchers(ctx context.Context, botID uuid.UUID) ([]DatingSearchRow, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT p.user_id, p.telegram_id, p.gender, p.province, p.city, p.age, p.interests,
+		SELECT p.user_id, p.platform, p.telegram_id, p.gender, p.province, p.city, p.age, p.interests,
 		       COALESCE(sq.filters->>'gender', 'any'),
 		       COALESCE(sq.filters->>'province', ''),
 		       COALESCE(sq.filters->>'city', ''),
@@ -315,7 +325,7 @@ func (r *DatingRepo) Searchers(ctx context.Context, botID uuid.UUID) ([]DatingSe
 	var out []DatingSearchRow
 	for rows.Next() {
 		var s DatingSearchRow
-		if err := rows.Scan(&s.UserID, &s.TelegramID, &s.Gender, &s.Province, &s.City, &s.Age, &s.Interests, &s.Filter, &s.ProvinceFilter, &s.CityFilter, &s.InterestsFilter, &s.AgeMin, &s.AgeMax, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.UserID, &s.Platform, &s.TelegramID, &s.Gender, &s.Province, &s.City, &s.Age, &s.Interests, &s.Filter, &s.ProvinceFilter, &s.CityFilter, &s.InterestsFilter, &s.AgeMin, &s.AgeMax, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -579,6 +589,7 @@ func (r *DatingRepo) CountRealActive(ctx context.Context, botID uuid.UUID, withi
 // NotifyRow is a notification candidate.
 type NotifyRow struct {
 	UserID     int64
+	Platform   string
 	TelegramID int64
 }
 
@@ -587,7 +598,7 @@ type NotifyRow struct {
 // since their last visit, gap since last notify, daily cap.
 func (r *DatingRepo) NotifyCandidates(ctx context.Context, botID uuid.UUID, dailyCap, gapHours, limit int) ([]NotifyRow, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT user_id, telegram_id FROM dating_profiles
+		SELECT user_id, platform, telegram_id FROM dating_profiles
 		WHERE bot_id = $1 AND NOT is_ghost AND status = 'joined'
 			AND name IS NOT NULL AND name <> '' AND gender IS NOT NULL
 			AND last_seen_at > now() - interval '14 days'
@@ -605,7 +616,7 @@ func (r *DatingRepo) NotifyCandidates(ctx context.Context, botID uuid.UUID, dail
 	var out []NotifyRow
 	for rows.Next() {
 		var n NotifyRow
-		if err := rows.Scan(&n.UserID, &n.TelegramID); err != nil {
+		if err := rows.Scan(&n.UserID, &n.Platform, &n.TelegramID); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -641,6 +652,7 @@ func (r *DatingRepo) SetNotifyDismissed(ctx context.Context, botID uuid.UUID, us
 type DatingUserCard struct {
 	UserID       int64     `json:"user_id"`
 	TelegramID   int64     `json:"telegram_id"`
+	Platform     string    `json:"platform"`
 	Username     *string   `json:"username,omitempty"`
 	FirstName    *string   `json:"first_name,omitempty"`
 	LastSeenAt   time.Time `json:"last_seen_at"`
@@ -673,7 +685,7 @@ func (r *DatingRepo) UserCards(ctx context.Context, botID uuid.UUID, q string, p
 		return nil, 0, err
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT u.id, u.telegram_id, u.username, u.first_name, u.last_seen_at,
+		SELECT u.id, u.telegram_id, u.platform, u.username, u.first_name, u.last_seen_at,
 		       p.status, p.coins, p.rating, p.total_ratings, COALESCE(p.is_ghost, false), p.ghost_persona
 		FROM bot_end_users u
 		LEFT JOIN dating_profiles p ON p.bot_id = u.bot_id AND p.user_id = u.id
@@ -689,7 +701,7 @@ func (r *DatingRepo) UserCards(ctx context.Context, botID uuid.UUID, q string, p
 	var out []DatingUserCard
 	for rows.Next() {
 		var c DatingUserCard
-		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.Username, &c.FirstName, &c.LastSeenAt,
+		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.Platform, &c.Username, &c.FirstName, &c.LastSeenAt,
 			&c.Status, &c.Coins, &c.Rating, &c.TotalRatings, &c.IsGhost, &c.GhostPersona); err != nil {
 			return nil, 0, err
 		}
@@ -1035,6 +1047,7 @@ func (r *DatingRepo) ResetStreak(ctx context.Context, botID uuid.UUID, userID in
 type UserDetail struct {
 	UserID           int64        `json:"user_id"`
 	TelegramID       int64        `json:"telegram_id"`
+	Platform         string       `json:"platform"`
 	Username         *string      `json:"username,omitempty"`
 	FirstName        *string      `json:"first_name,omitempty"`
 	LastName         *string      `json:"last_name,omitempty"`
@@ -1085,7 +1098,7 @@ type EventRow struct {
 func (r *DatingRepo) UserDetail(ctx context.Context, botID uuid.UUID, userID int64) (*UserDetail, error) {
 	d := &UserDetail{UserID: userID}
 	err := r.db.QueryRow(ctx, `
-		SELECT u.telegram_id, u.username, u.first_name, u.last_name, u.is_blocked,
+		SELECT u.telegram_id, u.platform, u.username, u.first_name, u.last_name, u.is_blocked,
 		       u.first_seen_at, u.last_seen_at,
 		       p.user_id IS NOT NULL,
 		       p.name, p.gender, p.age, p.city, p.status, p.partner_user_id,
@@ -1095,7 +1108,7 @@ func (r *DatingRepo) UserDetail(ctx context.Context, botID uuid.UUID, userID int
 		LEFT JOIN dating_profiles p ON p.bot_id = u.bot_id AND p.user_id = u.id
 		WHERE u.bot_id = $1 AND u.id = $2`,
 		botID, userID).Scan(
-		&d.TelegramID, &d.Username, &d.FirstName, &d.LastName, &d.IsBlocked,
+		&d.TelegramID, &d.Platform, &d.Username, &d.FirstName, &d.LastName, &d.IsBlocked,
 		&d.FirstSeenAt, &d.LastSeenAt,
 		&d.HasProfile,
 		&d.Name, &d.Gender, &d.Age, &d.City, &d.Status, &d.PartnerUserID,

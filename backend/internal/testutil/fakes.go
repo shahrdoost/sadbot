@@ -300,6 +300,18 @@ func (f *BotRepo) UpdateToken(ctx context.Context, id uuid.UUID, tokenEnc []byte
 	return nil
 }
 
+func (f *BotRepo) UpdateKatToken(ctx context.Context, id uuid.UUID, tokenEnc []byte, username *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.Bots[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	b.KatTokenEncrypted = tokenEnc
+	b.KatUsername = username
+	return nil
+}
+
 func (f *BotRepo) SetStatus(ctx context.Context, id uuid.UUID, status string, lastError *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -373,7 +385,7 @@ type Validator struct {
 	LastTok  string
 }
 
-func (f *Validator) ValidateToken(ctx context.Context, token string) (string, error) {
+func (f *Validator) ValidateToken(ctx context.Context, platform, token string) (string, error) {
 	f.Calls++
 	f.LastTok = token
 	return f.Username, f.Err

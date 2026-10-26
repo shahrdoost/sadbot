@@ -18,11 +18,11 @@ type BotRepo struct {
 
 func NewBotRepo(db *pgxpool.Pool) *BotRepo { return &BotRepo{db: db} }
 
-const botCols = `id, name, telegram_username, token_encrypted, template_key, status, last_error, token_validated_at, created_by, created_at, updated_at`
+const botCols = `id, name, telegram_username, token_encrypted, kat_username, kat_token_encrypted, template_key, status, last_error, token_validated_at, created_by, created_at, updated_at`
 
 func scanBot(row pgx.Row) (*domain.Bot, error) {
 	b := &domain.Bot{}
-	err := row.Scan(&b.ID, &b.Name, &b.TelegramUsername, &b.TokenEncrypted, &b.TemplateKey, &b.Status, &b.LastError, &b.TokenValidatedAt, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.Name, &b.TelegramUsername, &b.TokenEncrypted, &b.KatUsername, &b.KatTokenEncrypted, &b.TemplateKey, &b.Status, &b.LastError, &b.TokenValidatedAt, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (r *BotRepo) ListByAdmin(ctx context.Context, adminID uuid.UUID, isSuper bo
 		return r.List(ctx)
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT b.id, b.name, b.telegram_username, b.token_encrypted, b.template_key, b.status, b.last_error, b.token_validated_at, b.created_by, b.created_at, b.updated_at
+		SELECT b.id, b.name, b.telegram_username, b.token_encrypted, b.kat_username, b.kat_token_encrypted, b.template_key, b.status, b.last_error, b.token_validated_at, b.created_by, b.created_at, b.updated_at
 		FROM bots b JOIN admin_bot_access a ON a.bot_id = b.id
 		WHERE a.admin_id = $1 ORDER BY b.created_at`, adminID)
 	if err != nil {
@@ -105,6 +105,20 @@ func (r *BotRepo) Update(ctx context.Context, id uuid.UUID, name *string, userna
 func (r *BotRepo) UpdateToken(ctx context.Context, id uuid.UUID, tokenEnc []byte, username *string) error {
 	tag, err := r.db.Exec(ctx, `
 		UPDATE bots SET token_encrypted = $2, telegram_username = $3, token_validated_at = now(), updated_at = now()
+		WHERE id = $1`, id, tokenEnc, username)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("bot not found")
+	}
+	return nil
+}
+
+// UpdateKatToken stores/refreshes the Kat-side twin token (nil clears it).
+func (r *BotRepo) UpdateKatToken(ctx context.Context, id uuid.UUID, tokenEnc []byte, username *string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE bots SET kat_token_encrypted = $2, kat_username = $3, updated_at = now()
 		WHERE id = $1`, id, tokenEnc, username)
 	if err != nil {
 		return err

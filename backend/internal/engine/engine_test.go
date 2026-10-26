@@ -48,7 +48,7 @@ type memUsers struct {
 
 func newMemUsers() *memUsers { return &memUsers{states: map[int64]json.RawMessage{}, next: 100} }
 
-func (m *memUsers) Upsert(ctx context.Context, botID string, telegramID int64, username, firstName, lastName *string) (int64, error) {
+func (m *memUsers) Upsert(ctx context.Context, botID, platform string, telegramID int64, username, firstName, lastName *string) (int64, error) {
 	for id, raw := range m.states {
 		var st map[string]any
 		_ = json.Unmarshal(raw, &st)
@@ -144,7 +144,7 @@ func cbUpdate(data string) *telegram.Update {
 func TestHandleUpdate_StartRendersHome(t *testing.T) {
 	eng, sender, events, users, bot := newEngineFixture(t)
 
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("/start"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("/start"))
 	if len(sender.sent) != 1 {
 		t.Fatalf("sent = %d, want 1 scene render", len(sender.sent))
 	}
@@ -165,9 +165,9 @@ func TestHandleUpdate_ButtonLabelRoutes(t *testing.T) {
 	eng, sender, _, _, bot := newEngineFixture(t)
 
 	// /start first so the user is in home
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("/start"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("/start"))
 	// tap the "about" button by label
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("📖 درباره ما"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("📖 درباره ما"))
 
 	if len(sender.sent) != 2 {
 		t.Fatalf("sent = %d, want 2", len(sender.sent))
@@ -180,7 +180,7 @@ func TestHandleUpdate_ButtonLabelRoutes(t *testing.T) {
 func TestHandleUpdate_UnknownText(t *testing.T) {
 	eng, sender, _, _, bot := newEngineFixture(t)
 
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("هر چی بی‌ربط"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("هر چی بی‌ربط"))
 	if len(sender.sent) != 1 {
 		t.Fatalf("sent = %d", len(sender.sent))
 	}
@@ -192,7 +192,7 @@ func TestHandleUpdate_UnknownText(t *testing.T) {
 func TestHandleUpdate_CallbackSceneDispatch(t *testing.T) {
 	eng, sender, events, _, bot := newEngineFixture(t)
 
-	eng.HandleUpdate(context.Background(), bot, sender, cbUpdate("scene:about"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("scene:about"))
 	if len(sender.callbacks) != 1 {
 		t.Fatalf("callback not answered")
 	}
@@ -213,20 +213,20 @@ func TestHandleUpdate_CallbackSceneDispatch(t *testing.T) {
 func TestHandleUpdate_SettingsTogglePersists(t *testing.T) {
 	eng, sender, _, users, bot := newEngineFixture(t)
 
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("/start"))
-	eng.HandleUpdate(context.Background(), bot, sender, cbUpdate("scene:settings"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("/start"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("scene:settings"))
 	// first render: notify off
 	if !strings.Contains(sender.sent[len(sender.sent)-1].Text, "خاموش") {
 		t.Fatalf("initial settings text = %q", sender.last().Text)
 	}
 	// toggle
-	eng.HandleUpdate(context.Background(), bot, sender, cbUpdate("act:settings.notify"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("act:settings.notify"))
 	if !strings.Contains(sender.last().Text, "روشن") {
 		t.Fatalf("after toggle text = %q", sender.last().Text)
 	}
 
 	// state persisted: reload and go to settings again — still on
-	eng.HandleUpdate(context.Background(), bot, sender, cbUpdate("scene:settings"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("scene:settings"))
 	if !strings.Contains(sender.last().Text, "روشن") {
 		t.Fatalf("persisted toggle lost: %q", sender.last().Text)
 	}
@@ -238,7 +238,7 @@ func TestHandleUpdate_IgnoresBots(t *testing.T) {
 	upd := msgUpdate("/start")
 	upd.Message.From.IsBot = true
 
-	eng.HandleUpdate(context.Background(), bot, sender, upd)
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, upd)
 	if len(sender.sent) != 0 {
 		t.Fatalf("bot updates must be ignored, got %+v", sender.sent)
 	}
@@ -249,7 +249,7 @@ func TestHandleUpdate_UnknownMediaGetsFallback(t *testing.T) {
 	upd := msgUpdate("")
 	upd.Message.Photo = []telegram.PhotoSize{{FileID: "abc"}}
 
-	eng.HandleUpdate(context.Background(), bot, sender, upd)
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, upd)
 	if len(sender.sent) != 1 || !strings.Contains(sender.sent[0].Text, "متوجه نشدم") {
 		t.Fatalf("sent = %+v", sender.sent)
 	}
@@ -261,7 +261,7 @@ func TestHandleUpdate_UnknownTemplateIsNoop(t *testing.T) {
 	sender := &recSender{}
 	bot := &domain.Bot{ID: uuid.New(), TemplateKey: "missing-template"}
 
-	eng.HandleUpdate(context.Background(), bot, sender, msgUpdate("/start"))
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("/start"))
 	if len(sender.sent) != 0 {
 		t.Fatalf("unknown template must not send, got %+v", sender.sent)
 	}

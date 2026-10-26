@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -35,10 +36,25 @@ type Client struct {
 	http  *http.Client
 }
 
+// Bot API endpoint prefixes. Kat (cr0.ir) is a Telegram fork speaking the same
+// URL shape and JSON envelopes, minus some methods (see ErrUnsupported).
+const (
+	BaseTelegram = "https://api.telegram.org/bot"
+	BaseKat      = "https://cr0.ir/bot"
+)
+
+// ErrUnsupported reports a method the endpoint does not implement
+// (Kat answers METHOD_NOT_FOUND for the gaps in its Bot API subset).
+var ErrUnsupported = errors.New("method not supported by this endpoint")
+
 func NewClient(token string) *Client {
+	return NewClientWithBase(BaseTelegram, token)
+}
+
+func NewClientWithBase(base, token string) *Client {
 	return &Client{
 		token: token,
-		base:  "https://api.telegram.org/bot" + token + "/",
+		base:  base + token + "/",
 		http:  &http.Client{Timeout: 60 * time.Second},
 	}
 }
@@ -71,6 +87,9 @@ func (c *Client) do(ctx context.Context, method string, payload any, out any) er
 		return fmt.Errorf("telegram %s: bad json: %w", method, err)
 	}
 	if !apiResp.OK {
+		if apiResp.Description == "METHOD_NOT_FOUND" {
+			return fmt.Errorf("%w: %s", ErrUnsupported, method)
+		}
 		apiErr := &APIError{Code: apiResp.ErrorCode, Description: apiResp.Description}
 		if apiResp.Parameters != nil {
 			apiErr.RetryAfter = apiResp.Parameters.RetryAfter
@@ -116,6 +135,9 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSec int) (
 		return nil, err
 	}
 	if !apiResp.OK {
+		if apiResp.Description == "METHOD_NOT_FOUND" {
+			return nil, fmt.Errorf("%w: getUpdates", ErrUnsupported)
+		}
 		apiErr := &APIError{Code: apiResp.ErrorCode, Description: apiResp.Description}
 		if apiResp.Parameters != nil {
 			apiErr.RetryAfter = apiResp.Parameters.RetryAfter
@@ -183,6 +205,9 @@ func (c *Client) SendPhotoUpload(ctx context.Context, chatID any, filename strin
 		return nil, err
 	}
 	if !apiResp.OK {
+		if apiResp.Description == "METHOD_NOT_FOUND" {
+			return nil, fmt.Errorf("%w: sendPhoto", ErrUnsupported)
+		}
 		apiErr := &APIError{Code: apiResp.ErrorCode, Description: apiResp.Description}
 		if apiResp.Parameters != nil {
 			apiErr.RetryAfter = apiResp.Parameters.RetryAfter

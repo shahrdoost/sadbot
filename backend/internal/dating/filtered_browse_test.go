@@ -32,7 +32,7 @@ func TestFilteredBrowseWizard(t *testing.T) {
 	e.feed(t, e.sendB, "⏭ رد شد")
 
 	stateOf := func(tg int64) map[string]any {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, tg)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", tg)
 		if err != nil || p == nil {
 			return nil
 		}
@@ -51,7 +51,7 @@ func TestFilteredBrowseWizard(t *testing.T) {
 		return s
 	}
 	coinsOf := func(tg int64) int {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, tg)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", tg)
 		if err != nil || p == nil {
 			return -1
 		}

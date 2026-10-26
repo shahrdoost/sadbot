@@ -515,7 +515,7 @@ func grantSignupBonus(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 		return
 	}
 	refBonus := bc.PriceInt("referral_bonus", 5)
-	refProfile, err := st.ProfileByTelegram(ctx, botID, refID)
+	refProfile, err := st.ProfileByTelegram(ctx, botID, "", refID)
 	if err != nil || refProfile == nil {
 		return
 	}

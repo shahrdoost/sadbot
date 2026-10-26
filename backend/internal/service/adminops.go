@@ -24,7 +24,7 @@ type AdminOpsService struct {
 	users        *postgres.BotUserRepo
 	audit        *postgres.AuditRepo
 	configs      *postgres.ConfigRepo
-	notify       func(ctx context.Context, botID uuid.UUID, telegramID int64, text string) error
+	notify       func(ctx context.Context, botID uuid.UUID, platform string, telegramID int64, text string) error
 	searchingMin int
 	chattingMin  int
 }
@@ -36,7 +36,7 @@ func NewAdminOpsService(
 	users *postgres.BotUserRepo,
 	audit *postgres.AuditRepo,
 	configs *postgres.ConfigRepo,
-	notify func(ctx context.Context, botID uuid.UUID, telegramID int64, text string) error,
+	notify func(ctx context.Context, botID uuid.UUID, platform string, telegramID int64, text string) error,
 ) *AdminOpsService {
 	return &AdminOpsService{
 		dating: dating, users: users, audit: audit, configs: configs, notify: notify,
@@ -213,7 +213,7 @@ func (s *AdminOpsService) DirectMessage(ctx context.Context, actor, botID uuid.U
 	if err != nil || u == nil {
 		return fmt.Errorf("کاربر یافت نشد")
 	}
-	if err := s.notify(ctx, botID, u.TelegramID, text); err != nil {
+	if err := s.notify(ctx, botID, u.Platform, u.TelegramID, text); err != nil {
 		return fmt.Errorf("ارسال ناموفق (بات در حال اجرا نیست؟): %w", err)
 	}
 	s.log(ctx, actor, "bot_user.direct_message", botID.String(), userID, map[string]any{"len": len(text)})
@@ -434,7 +434,7 @@ func (s *AdminOpsService) ScanTelegramBlocks(ctx context.Context, actor *domain.
 	}
 	res := &ScanResult{Scanned: len(candidates)}
 	for _, u := range candidates {
-		if err := s.notify(ctx, botID, u.TelegramID, defaultBlockScanText); err != nil {
+		if err := s.notify(ctx, botID, u.Platform, u.TelegramID, defaultBlockScanText); err != nil {
 			var apiErr *telegram.APIError
 			if errors.As(err, &apiErr) && apiErr.IsForbidden() {
 				if merr := s.users.MarkBlockedByBot(ctx, botID, u.ID); merr == nil {

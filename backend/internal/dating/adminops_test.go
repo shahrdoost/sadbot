@@ -16,7 +16,7 @@ func TestAdjustCoinsClampsAtZero(t *testing.T) {
 	ctx := context.Background()
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
 
-	p, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if p.Coins != 5 {
 		t.Fatalf("expected 5 signup coins, got %d", p.Coins)
 	}
@@ -55,8 +55,8 @@ func TestResetProfileKeepsRow(t *testing.T) {
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
 	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 
 	// give A state worth wiping: extra coins, a like, a streak, a block flag
 	if _, err := e.store.Repo().AdjustCoins(ctx, e.botID, pA.UserID, 100); err != nil {
@@ -118,8 +118,8 @@ func TestSetBlockedPullsOutOfChat(t *testing.T) {
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
 	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 
 	if _, err := e.store.ConnectUsers(ctx, e.botID, pA.UserID, pB.UserID); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -166,8 +166,8 @@ func TestStuckScanAndReset(t *testing.T) {
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
 	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 
 	if _, err := e.store.ConnectUsers(ctx, e.botID, pA.UserID, pB.UserID); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -210,7 +210,7 @@ func TestResetAllChatsKeepsProfile(t *testing.T) {
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
 	e.feed(t, e.sendA, "⏭ رد شد")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if _, err := e.store.Repo().AdjustCoins(ctx, e.botID, pA.UserID, 42); err != nil {
 		t.Fatalf("seed coins: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestResetStreak(t *testing.T) {
 	e := newBrowseEnv(t)
 	ctx := context.Background()
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
-	p, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	p, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 
 	if _, err := e.store.Repo().RecordStreak(ctx, e.botID, p.UserID); err != nil {
 		t.Fatalf("streak: %v", err)
@@ -260,7 +260,7 @@ func TestUserDetailAssembles(t *testing.T) {
 	e := newBrowseEnv(t)
 	ctx := context.Background()
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 
 	d, err := e.store.Repo().UserDetail(ctx, e.botID, pA.UserID)
 	if err != nil {
@@ -274,7 +274,7 @@ func TestUserDetailAssembles(t *testing.T) {
 	}
 
 	// a user with no dating profile must not fail the LEFT JOIN
-	u, err := e.users.Upsert(ctx, e.botID.String(), 4242, nil, strPtrTest("بی‌پروفایل"), nil)
+	u, err := e.users.Upsert(ctx, e.botID.String(), "telegram", 4242, nil, strPtrTest("بی‌پروفایل"), nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}

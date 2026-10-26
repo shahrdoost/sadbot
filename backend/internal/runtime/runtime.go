@@ -32,12 +32,12 @@ func NewConfigStoreAdapter(repo *postgres.ConfigRepo) engine.ConfigStore {
 
 type userStore struct{ repo *postgres.BotUserRepo }
 
-func (s *userStore) Upsert(ctx context.Context, botID string, telegramID int64, username, firstName, lastName *string) (int64, error) {
+func (s *userStore) Upsert(ctx context.Context, botID, platform string, telegramID int64, username, firstName, lastName *string) (int64, error) {
 	id, err := uuid.Parse(botID)
 	if err != nil {
 		return 0, err
 	}
-	u, err := s.repo.Upsert(ctx, id, telegramID, username, firstName, lastName)
+	u, err := s.repo.Upsert(ctx, id, platform, telegramID, username, firstName, lastName)
 	if err != nil {
 		return 0, err
 	}
@@ -191,9 +191,16 @@ type StatusReporter interface {
 	SetStatus(ctx context.Context, botID uuid.UUID, status string, lastError *string) error
 }
 
+// botKey identifies one platform runtime of a bot — a bot serves Telegram
+// and Kat simultaneously, each with its own poller and client.
+type botKey struct {
+	botID    uuid.UUID
+	platform string
+}
+
 type Manager struct {
 	mu       sync.Mutex
-	runtimes map[uuid.UUID]*botRuntime
+	runtimes map[botKey]*botRuntime
 	engine   *engine.Engine
 	bots     *postgres.BotRepo
 	users    *postgres.BotUserRepo
@@ -202,7 +209,7 @@ type Manager struct {
 
 func NewManager(eng *engine.Engine, bots *postgres.BotRepo, users *postgres.BotUserRepo, status StatusReporter) *Manager {
 	return &Manager{
-		runtimes: map[uuid.UUID]*botRuntime{},
+		runtimes: map[botKey]*botRuntime{},
 		engine:   eng,
 		bots:     bots,
 		users:    users,
@@ -228,95 +235,142 @@ func (m *Manager) StartRunningBots(ctx context.Context) error {
 }
 
 func (m *Manager) Start(ctx context.Context, bot *domain.Bot) error {
+	if err := m.startPlatform(ctx, bot, domain.PlatformTelegram); err != nil {
+		return err
+	}
+	// Kat side is optional: only when the bot has a Kat token. A Kat failure
+	// must not take the Telegram side down.
+	if len(bot.KatTokenEncrypted) > 0 {
+		if err := m.startPlatform(ctx, bot, domain.PlatformKat); err != nil {
+			log.Printf("[runtime] bot %s: kat side not started: %v", bot.Name, err)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) startPlatform(ctx context.Context, bot *domain.Bot, platform string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.runtimes[bot.ID]; exists {
+	key := botKey{botID: bot.ID, platform: platform}
+	if _, exists := m.runtimes[key]; exists {
 		return nil
 	}
-	token, err := decryptToken(bot)
+	token, err := decryptToken(bot, platform)
 	if err != nil {
 		return err
 	}
-	client := telegram.NewClient(token)
+	base := telegram.BaseTelegram
+	if platform == domain.PlatformKat {
+		base = telegram.BaseKat
+	}
+	client := telegram.NewClientWithBase(base, token)
 	if _, err := client.GetMe(ctx); err != nil {
-		return fmt.Errorf("token invalid: %w", err)
+		return fmt.Errorf("token invalid (%s): %w", platform, err)
 	}
 
 	rtCtx, cancel := context.WithCancel(context.Background())
 	rt := &botRuntime{
-		bot:     *bot,
-		client:  client,
-		cancel:  cancel,
-		out:     make(chan outgoing, 256),
-		updates: make(chan telegram.Update, 64),
+		bot:      *bot,
+		platform: platform,
+		client:   client,
+		cancel:   cancel,
+		out:      make(chan outgoing, 256),
+		updates:  make(chan telegram.Update, 64),
 	}
 	rt.wg.Add(3)
 	go m.pollLoop(rtCtx, rt)
 	go m.workLoop(rtCtx, rt)
 	go m.outLoop(rtCtx, rt)
 
-	m.runtimes[bot.ID] = rt
+	m.runtimes[key] = rt
 	_ = m.status.SetStatus(ctx, bot.ID, domain.BotStatusRunning, nil)
-	log.Printf("[runtime] bot %s (@%s) running", bot.Name, deref(bot.TelegramUsername))
+	log.Printf("[runtime] bot %s (@%s) running on %s", bot.Name, deref(bot.TelegramUsername), platform)
 	return nil
 }
 
 func (m *Manager) Stop(ctx context.Context, botID uuid.UUID) error {
 	m.mu.Lock()
-	rt, ok := m.runtimes[botID]
-	if ok {
-		delete(m.runtimes, botID)
+	stopped := false
+	for key, rt := range m.runtimes {
+		if key.botID == botID {
+			delete(m.runtimes, key)
+			rt.cancel()
+			stopped = true
+		}
 	}
 	m.mu.Unlock()
-	if !ok {
-		_ = m.status.SetStatus(ctx, botID, domain.BotStatusStopped, nil)
-		return nil
-	}
-	rt.cancel()
-	done := make(chan struct{})
-	go func() { rt.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
 	_ = m.status.SetStatus(ctx, botID, domain.BotStatusStopped, nil)
-	log.Printf("[runtime] bot %s stopped", rt.bot.Name)
+	if stopped {
+		log.Printf("[runtime] bot %s stopped", botID)
+	}
 	return nil
 }
 
 func (m *Manager) StopAll(ctx context.Context) {
 	m.mu.Lock()
-	ids := make([]uuid.UUID, 0, len(m.runtimes))
-	for id := range m.runtimes {
-		ids = append(ids, id)
+	rts := make([]*botRuntime, 0, len(m.runtimes))
+	for key := range m.runtimes {
+		rts = append(rts, m.runtimes[key])
+		delete(m.runtimes, key)
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
+	for _, rt := range rts {
 		// halt the pollers without touching DB status: a process restart
 		// (deploy) must not mark bots stopped, or the next boot's
 		// StartRunningBots skips them and the whole fleet silently dies.
-		if rt, ok := m.runtimes[id]; ok {
-			rt.cancel()
-		}
+		rt.cancel()
 	}
 }
 
 func (m *Manager) IsRunning(botID uuid.UUID) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.runtimes[botID]
-	return ok
+	for key := range m.runtimes {
+		if key.botID == botID {
+			return true
+		}
+	}
+	return false
 }
 
 // ClientFor exposes a running bot's Telegram client (for matcher notifications).
 func (m *Manager) ClientFor(botID uuid.UUID) (*telegram.Client, bool) {
+	return m.ClientForPlatform(botID, domain.PlatformTelegram)
+}
+
+// ClientForPlatform exposes the client of one platform runtime.
+func (m *Manager) ClientForPlatform(botID uuid.UUID, platform string) (*telegram.Client, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rt, ok := m.runtimes[botID]
+	rt, ok := m.runtimes[botKey{botID: botID, platform: platform}]
 	if !ok {
 		return nil, false
 	}
 	return rt.client, true
+}
+
+// SendPlatform implements engine.Router: deliver to a chat on any platform
+// this bot serves (cross-platform chat relay / notifications).
+func (m *Manager) SendPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error) {
+	client, ok := m.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("no runtime for bot %s on %s", botID, platform)
+	}
+	return client.SendMessage(ctx, telegram.SendMessagePayload{
+		ChatID:      chatID,
+		Text:        text,
+		ReplyMarkup: kbd,
+		ReplyTo:     replyTo,
+	})
+}
+
+// ForwardMediaPlatform implements engine.Router for media relays.
+func (m *Manager) ForwardMediaPlatform(ctx context.Context, botID uuid.UUID, platform string, fromChatID, toChatID, messageID int64) (*telegram.Message, error) {
+	client, ok := m.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("no runtime for bot %s on %s", botID, platform)
+	}
+	return client.ForwardMedia(ctx, fromChatID, toChatID, messageID)
 }
 
 type outgoing struct {
@@ -326,12 +380,24 @@ type outgoing struct {
 }
 
 type botRuntime struct {
-	bot     domain.Bot
-	client  *telegram.Client
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	out     chan outgoing
-	updates chan telegram.Update
+	bot      domain.Bot
+	platform string
+	client   *telegram.Client
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	out      chan outgoing
+	updates  chan telegram.Update
+}
+
+// isPollHold reports whether the error means the endpoint may still be holding
+// our previous getUpdates (client-side deadline, or the 409 CONFLICT that a
+// second concurrent getUpdates gets).
+func isPollHold(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var apiErr *telegram.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == 409
 }
 
 func (m *Manager) pollLoop(ctx context.Context, rt *botRuntime) {
@@ -342,7 +408,9 @@ func (m *Manager) pollLoop(ctx context.Context, rt *botRuntime) {
 		if ctx.Err() != nil {
 			return
 		}
-		pollCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+		// generous budget: a slow or stalled long-poll must outwait the
+		// endpoint's own hold, or the abandoned poll 409s every retry
+		pollCtx, cancel := context.WithTimeout(ctx, 65*time.Second)
 		updates, err := rt.client.GetUpdates(pollCtx, offset, 30)
 		cancel()
 		if err != nil {
@@ -355,15 +423,21 @@ func (m *Manager) pollLoop(ctx context.Context, rt *botRuntime) {
 				_ = m.status.SetStatus(context.Background(), rt.bot.ID, domain.BotStatusError, &msg)
 				rt.cancel()
 				m.mu.Lock()
-				delete(m.runtimes, rt.bot.ID)
+				delete(m.runtimes, botKey{botID: rt.bot.ID, platform: rt.platform})
 				m.mu.Unlock()
 				return
 			}
-			log.Printf("[runtime] poll error bot=%s: %v (backoff %s)", rt.bot.Name, err, backoff)
+			wait := backoff
+			// deadline/409: the server may still be holding our poll — give it
+			// time to expire before retrying, or every retry 409s
+			if isPollHold(err) && wait < 15*time.Second {
+				wait = 15 * time.Second
+			}
+			log.Printf("[runtime] poll error bot=%s: %v (backoff %s)", rt.bot.Name, err, wait)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(backoff):
+			case <-time.After(wait):
 			}
 			if backoff < 60*time.Second {
 				backoff *= 2
@@ -408,7 +482,7 @@ func (m *Manager) handleUpdate(ctx context.Context, rt *botRuntime, u telegram.U
 		}
 	}()
 	sender := &TelegramSender{client: rt.client}
-	m.engine.HandleUpdate(ctx, &rt.bot, sender, &u)
+	m.engine.HandleUpdate(ctx, rt.platform, &rt.bot, sender, &u)
 }
 
 func (m *Manager) outLoop(ctx context.Context, rt *botRuntime) {
@@ -436,11 +510,11 @@ func (m *Manager) outLoop(ctx context.Context, rt *botRuntime) {
 }
 
 // token decryption helper (set by main via package-level func to avoid import cycle)
-var decryptToken = func(bot *domain.Bot) (string, error) {
+var decryptToken = func(bot *domain.Bot, platform string) (string, error) {
 	return "", errors.New("decryptToken not configured")
 }
 
-func ConfigureTokenDecryptor(fn func(bot *domain.Bot) (string, error)) {
+func ConfigureTokenDecryptor(fn func(bot *domain.Bot, platform string) (string, error)) {
 	decryptToken = fn
 }
 

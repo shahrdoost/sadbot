@@ -214,7 +214,7 @@ func (h *PanelHandler) SeedConfessions(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	// synthetic system author so the FK holds without a real user
-	seedUser, err := h.users.Upsert(ctx, botID, -30001, nil, strPtr("کاربر نمونه"), nil)
+	seedUser, err := h.users.Upsert(ctx, botID, "telegram", -30001, nil, strPtr("کاربر نمونه"), nil)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err.Error())
 		return

@@ -22,6 +22,7 @@ export interface Bot {
   id: string
   name: string
   telegram_username?: string
+  kat_username?: string
   template_key: string
   status: string
   last_error?: string
@@ -31,6 +32,7 @@ export interface Bot {
 
 export interface BotUser {
   id: number
+  platform: string
   telegram_id: number
   username?: string
   first_name?: string
@@ -209,6 +211,7 @@ export interface SupportTicket {
 export interface DatingUser {
   user_id: number
   telegram_id: number
+  platform: string
   username?: string
   first_name?: string
   last_seen_at: string
@@ -273,6 +276,7 @@ export interface StuckUser {
 export interface UserDetail {
   user_id: number
   telegram_id: number
+  platform: string
   username?: string
   first_name?: string
   last_name?: string
@@ -411,7 +415,7 @@ export const sadbotApi = createApi({
       query: () => '/bots',
       providesTags: ['Bot'],
     }),
-    createBot: builder.mutation<Bot, { name: string; token: string; template_key: string }>({
+    createBot: builder.mutation<Bot, { name: string; token: string; kat_token?: string; template_key: string }>({
       query: (body) => ({ url: '/bots', method: 'POST', body }),
       invalidatesTags: ['Bot', 'Finance'],
     }),

@@ -10,6 +10,8 @@ import (
 
 	"sadbot/internal/domain"
 	"sadbot/internal/telegram"
+
+	"github.com/google/uuid"
 )
 
 // Sender abstracts Telegram sending so the engine is testable.
@@ -41,9 +43,18 @@ type MediaForwarder interface {
 
 // Stores the engine depends on (implemented by repos / runtime glue).
 type UserStore interface {
-	Upsert(ctx context.Context, botID string, telegramID int64, username, firstName, lastName *string) (userID int64, err error)
+	Upsert(ctx context.Context, botID, platform string, telegramID int64, username, firstName, lastName *string) (userID int64, err error)
 	GetState(ctx context.Context, botID string, userID int64) (json.RawMessage, error)
 	SetState(ctx context.Context, botID string, userID int64, state json.RawMessage) error
+}
+
+// Router delivers a message to a chat on ANY platform the bot serves
+// (implemented by runtime.Manager). Replies to the current update stay on
+// Sender; only cross-user sends (chat relay to a partner on the other
+// platform, matcher/broadcast notifications) need this.
+type Router interface {
+	SendPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error)
+	ForwardMediaPlatform(ctx context.Context, botID uuid.UUID, platform string, fromChatID, toChatID, messageID int64) (*telegram.Message, error)
 }
 
 type EventStore interface {
@@ -58,6 +69,7 @@ type ConfigStore interface {
 type BotContext struct {
 	BotID         string
 	UserID        int64
+	Platform      string // platform of this update's user ("telegram" | "kat")
 	TelegramID    int64
 	ChatID        int64
 	MsgID         int64 // message_id of the inbound message (0 for callbacks)
@@ -69,6 +81,7 @@ type BotContext struct {
 	Prices        map[string]any // coin costs / packages (merged bot config)
 	users         UserStore
 	events        EventStore
+	router        Router
 	actionHandler ActionHandler
 }
 
@@ -100,6 +113,7 @@ type Engine struct {
 	users    UserStore
 	events   EventStore
 	configs  ConfigStore
+	router   Router
 	data     map[string]any
 }
 
@@ -110,8 +124,11 @@ func New(registry *Registry, users UserStore, events EventStore, configs ConfigS
 // SetData injects dependencies exposed to templates via BotContext.Data.
 func (e *Engine) SetData(key string, v any) { e.data[key] = v }
 
-// HandleUpdate processes one Telegram update for a bot.
-func (e *Engine) HandleUpdate(ctx context.Context, bot *domain.Bot, sender Sender, upd *telegram.Update) {
+// SetRouter injects the cross-platform send router (runtime.Manager).
+func (e *Engine) SetRouter(r Router) { e.router = r }
+
+// HandleUpdate processes one update arriving on `platform` for a bot.
+func (e *Engine) HandleUpdate(ctx context.Context, platform string, bot *domain.Bot, sender Sender, upd *telegram.Update) {
 	tgUser := upd.EffectiveUser()
 	chatID := upd.EffectiveChatID()
 	if tgUser == nil || chatID == 0 {
@@ -127,7 +144,7 @@ func (e *Engine) HandleUpdate(ctx context.Context, bot *domain.Bot, sender Sende
 		return
 	}
 
-	userID, err := e.users.Upsert(ctx, bot.ID.String(), tgUser.ID, ptr(tgUser.Username), ptr(tgUser.FirstName), ptr(tgUser.LastName))
+	userID, err := e.users.Upsert(ctx, bot.ID.String(), platform, tgUser.ID, ptr(tgUser.Username), ptr(tgUser.FirstName), ptr(tgUser.LastName))
 	if err != nil {
 		log.Printf("[engine] upsert user: %v", err)
 		return
@@ -148,6 +165,7 @@ func (e *Engine) HandleUpdate(ctx context.Context, bot *domain.Bot, sender Sende
 	bc := &BotContext{
 		BotID:      bot.ID.String(),
 		UserID:     userID,
+		Platform:   platform,
 		TelegramID: tgUser.ID,
 		ChatID:     chatID,
 		Sender:     sender,
@@ -158,6 +176,7 @@ func (e *Engine) HandleUpdate(ctx context.Context, bot *domain.Bot, sender Sende
 		Prices:     prices,
 		users:      e.users,
 		events:     e.events,
+		router:     e.router,
 	}
 	if upd.Message != nil {
 		bc.MsgID = upd.Message.MessageID
@@ -393,6 +412,60 @@ func (bc *BotContext) SendTo(chatID int64, text string, replyTo int64) (*telegra
 	return bc.Sender.Send(context.Background(), chatID, text, nil, replyTo)
 }
 
+// SendToPlatform delivers to a chat on a specific platform — the partner in a
+// cross-platform chat may live on a different endpoint than the current
+// update. Same-platform targets short-circuit to Sender.
+func (bc *BotContext) SendToPlatform(platform string, chatID int64, text string, replyTo int64) (*telegram.Message, error) {
+	return bc.sendToPlatformFull(platform, chatID, text, nil, replyTo)
+}
+
+// SendKBDToPlatform sends text + reply keyboard to a chat on a specific platform.
+func (bc *BotContext) SendKBDToPlatform(platform string, chatID int64, text string, rows [][]string) (*telegram.Message, error) {
+	var kbd telegram.ReplyKeyboardMarkup
+	kbd.ResizeKeyboard = true
+	for _, row := range rows {
+		kRow := make([]telegram.ReplyKeyboardButton, 0, len(row))
+		for _, label := range row {
+			kRow = append(kRow, telegram.ReplyKeyboardButton{Text: label})
+		}
+		if len(kRow) > 0 {
+			kbd.Keyboard = append(kbd.Keyboard, kRow)
+		}
+	}
+	raw, _ := json.Marshal(kbd)
+	return bc.sendToPlatformFull(platform, chatID, text, raw, 0)
+}
+
+func (bc *BotContext) sendToPlatformFull(platform string, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error) {
+	if platform == bc.Platform {
+		return bc.Sender.Send(context.Background(), chatID, text, kbd, replyTo)
+	}
+	if bc.router == nil {
+		return nil, errors.New("cross-platform send: no router configured")
+	}
+	botID, err := uuid.Parse(bc.BotID)
+	if err != nil {
+		return nil, err
+	}
+	return bc.router.SendPlatform(context.Background(), botID, platform, chatID, text, kbd, replyTo)
+}
+
+// ForwardMediaToPlatform relays media to a chat on a specific platform.
+func (bc *BotContext) ForwardMediaToPlatform(platform string, chatID, fromChatID, messageID int64) (*telegram.Message, error) {
+	if platform == bc.Platform {
+		return bc.ForwardMediaTo(chatID, fromChatID, messageID)
+	}
+	if bc.router == nil {
+		return nil, errors.New("cross-platform forward: no router configured")
+	}
+	botID, err := uuid.Parse(bc.BotID)
+	if err != nil {
+		return nil, err
+	}
+	m, err := bc.router.ForwardMediaPlatform(context.Background(), botID, platform, fromChatID, chatID, messageID)
+	return m, mediaErr(err)
+}
+
 // ForwardMediaTo relays a message this bot received (from the sender's chat)
 // into chatID. Returns ErrMediaUnsupported when the sender can't copy media,
 // so callers can tell the user it wasn't carried.
@@ -401,7 +474,17 @@ func (bc *BotContext) ForwardMediaTo(chatID, fromChatID, messageID int64) (*tele
 	if !ok {
 		return nil, ErrMediaUnsupported
 	}
-	return f.ForwardMedia(context.Background(), fromChatID, chatID, messageID)
+	m, err := f.ForwardMedia(context.Background(), fromChatID, chatID, messageID)
+	return m, mediaErr(err)
+}
+
+// mediaErr maps a missing forwardMessage method (Kat subset) onto
+// ErrMediaUnsupported so callers degrade instead of killing the chat.
+func mediaErr(err error) error {
+	if errors.Is(err, telegram.ErrUnsupported) {
+		return ErrMediaUnsupported
+	}
+	return err
 }
 
 // ErrMediaUnsupported means the configured sender cannot relay media.

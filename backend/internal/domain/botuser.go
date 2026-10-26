@@ -15,6 +15,7 @@ type UserState struct {
 type BotEndUser struct {
 	ID          int64           `json:"id"`
 	BotID       string          `json:"bot_id"`
+	Platform    string          `json:"platform"`
 	TelegramID  int64           `json:"telegram_id"`
 	Username    *string         `json:"username,omitempty"`
 	FirstName   *string         `json:"first_name,omitempty"`

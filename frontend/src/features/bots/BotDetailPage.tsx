@@ -179,7 +179,14 @@ export default function BotDetailPage() {
             </span>
           </h2>
           {bot.telegram_username && (
-            <div className="text-sm text-slate-500 dark:text-slate-400 font-mono" dir="ltr">{bot.telegram_username}</div>
+            <div className="text-sm text-slate-500 dark:text-slate-400 font-mono" dir="ltr">
+              {bot.telegram_username}
+              {bot.kat_username && (
+                <span className="ms-2 not-rtl:inline-block text-xs rounded-full bg-violet-100 dark:bg-violet-900 text-violet-700 dark:text-violet-300 px-2 py-0.5 font-sans" dir="rtl">
+                  کت: @{bot.kat_username}
+                </span>
+              )}
+            </div>
           )}
           {bot.last_error && <div className="text-sm text-red-600 dark:text-red-400 mt-1">خطا: {bot.last_error}</div>}
         </div>
@@ -400,6 +407,13 @@ function StatBox({ label, value }: { label: string; value: string }) {
   )
 }
 
+function PlatformBadge({ platform }: { platform: string }) {
+  if (platform === 'kat') {
+    return <span className="inline-block text-xs rounded-full bg-violet-100 dark:bg-violet-900 text-violet-700 dark:text-violet-300 px-2 py-0.5">کت</span>
+  }
+  return <span className="inline-block text-xs rounded-full bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300 px-2 py-0.5">تلگرام</span>
+}
+
 function UsersTab({ botId }: { botId: string }) {
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
@@ -438,6 +452,7 @@ function UsersTab({ botId }: { botId: string }) {
         <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400">
           <tr>
             <th className="text-start px-4 py-3">ID تلگرام</th>
+            <th className="text-start px-4 py-3">پلتفرم</th>
             <th className="text-start px-4 py-3">نام</th>
             <th className="text-start px-4 py-3">username</th>
             <th className="text-start px-4 py-3">سکه</th>
@@ -454,6 +469,7 @@ function UsersTab({ botId }: { botId: string }) {
             return (
             <tr key={u.user_id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
               <td className="px-4 py-2 font-mono text-xs" dir="ltr">{u.telegram_id}</td>
+              <td className="px-4 py-2"><PlatformBadge platform={u.platform} /></td>
               <td className="px-4 py-2">
                 {u.first_name ?? '—'}
                 {u.is_ghost && (
@@ -482,7 +498,7 @@ function UsersTab({ botId }: { botId: string }) {
             )
           })}
           {data && data.users.length === 0 && (
-            <tr><td colSpan={9} className="p-8 text-center text-slate-400 dark:text-slate-500">کاربری یافت نشد</td></tr>
+            <tr><td colSpan={10} className="p-8 text-center text-slate-400 dark:text-slate-500">کاربری یافت نشد</td></tr>
           )}
         </tbody>
       </table>
@@ -534,7 +550,10 @@ function UserDetailDrawer({ botId, userId, onClose }: { botId: string; userId: n
         ) : (
           <>
             <div className="card p-4 text-sm space-y-1">
-              <div>{d.first_name ?? '—'} {d.username ? `(@${d.username})` : ''}</div>
+              <div className="flex items-center gap-2">
+                {d.first_name ?? '—'} {d.username ? `(@${d.username})` : ''}
+                <PlatformBadge platform={d.platform} />
+              </div>
               <div className="font-mono text-xs text-slate-500 dark:text-slate-400" dir="ltr">{d.telegram_id}</div>
               <div className="flex gap-3 pt-1">
                 <span>سکه: {toFaDigits(d.coins ?? 0)}</span>

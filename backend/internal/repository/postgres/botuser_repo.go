@@ -18,31 +18,41 @@ type BotUserRepo struct {
 
 func NewBotUserRepo(db *pgxpool.Pool) *BotUserRepo { return &BotUserRepo{db: db} }
 
-const botUserCols = `id, bot_id, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at`
+const botUserCols = `id, bot_id, platform, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at`
 
-func (r *BotUserRepo) Upsert(ctx context.Context, botID uuid.UUID, telegramID int64, username, firstName, lastName *string) (*domain.BotEndUser, error) {
+func (r *BotUserRepo) Upsert(ctx context.Context, botID uuid.UUID, platform string, telegramID int64, username, firstName, lastName *string) (*domain.BotEndUser, error) {
+	if !domain.ValidPlatform(platform) {
+		platform = domain.PlatformTelegram
+	}
 	u := &domain.BotEndUser{}
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO bot_end_users (bot_id, telegram_id, username, first_name, last_name)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (bot_id, telegram_id) DO UPDATE SET
+		INSERT INTO bot_end_users (bot_id, platform, telegram_id, username, first_name, last_name)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (bot_id, platform, telegram_id) DO UPDATE SET
 			username = EXCLUDED.username,
 			first_name = EXCLUDED.first_name,
 			last_name = EXCLUDED.last_name,
 			last_seen_at = now()
 		RETURNING `+botUserCols,
-		botID, telegramID, username, firstName, lastName,
-	).Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
+		botID, platform, telegramID, username, firstName, lastName,
+	).Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert bot user: %w", err)
 	}
 	return u, nil
 }
 
-func (r *BotUserRepo) GetByTelegramID(ctx context.Context, botID uuid.UUID, telegramID int64) (*domain.BotEndUser, error) {
+// GetByTelegramID looks a user up by its platform id. Pass platform "" to
+// match on any platform (panel search); the identity is (bot, platform, id).
+func (r *BotUserRepo) GetByTelegramID(ctx context.Context, botID uuid.UUID, platform string, telegramID int64) (*domain.BotEndUser, error) {
 	u := &domain.BotEndUser{}
-	err := r.db.QueryRow(ctx, `SELECT `+botUserCols+` FROM bot_end_users WHERE bot_id = $1 AND telegram_id = $2`, botID, telegramID).
-		Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
+	var row pgx.Row
+	if platform != "" {
+		row = r.db.QueryRow(ctx, `SELECT `+botUserCols+` FROM bot_end_users WHERE bot_id = $1 AND platform = $3 AND telegram_id = $2`, botID, telegramID, platform)
+	} else {
+		row = r.db.QueryRow(ctx, `SELECT `+botUserCols+` FROM bot_end_users WHERE bot_id = $1 AND telegram_id = $2`, botID, telegramID)
+	}
+	err := row.Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -55,7 +65,7 @@ func (r *BotUserRepo) GetByTelegramID(ctx context.Context, botID uuid.UUID, tele
 func (r *BotUserRepo) GetByID(ctx context.Context, botID uuid.UUID, id int64) (*domain.BotEndUser, error) {
 	u := &domain.BotEndUser{}
 	err := r.db.QueryRow(ctx, `SELECT `+botUserCols+` FROM bot_end_users WHERE bot_id = $1 AND id = $2`, botID, id).
-		Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
+		Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -131,7 +141,7 @@ func (r *BotUserRepo) List(ctx context.Context, botID uuid.UUID, f UserFilter) (
 	page := &UserPage{Total: total, Users: []domain.BotEndUser{}}
 	for rows.Next() {
 		var u domain.BotEndUser
-		if err := rows.Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
 			return nil, err
 		}
 		page.Users = append(page.Users, u)
@@ -146,7 +156,7 @@ func (r *BotUserRepo) ListByScene(ctx context.Context, botID uuid.UUID, scene st
 		limit = 50
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT id, bot_id, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at
+		SELECT id, bot_id, platform, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at
 		FROM bot_end_users
 		WHERE bot_id = $1 AND state->>'scene' = $2
 		ORDER BY last_seen_at DESC
@@ -158,7 +168,7 @@ func (r *BotUserRepo) ListByScene(ctx context.Context, botID uuid.UUID, scene st
 	out := []domain.BotEndUser{}
 	for rows.Next() {
 		var u domain.BotEndUser
-		if err := rows.Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -176,7 +186,7 @@ func (r *BotUserRepo) ListInactive(ctx context.Context, botID uuid.UUID, days, l
 		limit = 100
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT id, bot_id, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at
+		SELECT id, bot_id, platform, telegram_id, username, first_name, last_name, state, is_blocked, first_seen_at, last_seen_at
 		FROM bot_end_users
 		WHERE bot_id = $1 AND NOT is_blocked AND last_seen_at < now() - make_interval(days => $2)
 		ORDER BY last_seen_at ASC
@@ -188,7 +198,7 @@ func (r *BotUserRepo) ListInactive(ctx context.Context, botID uuid.UUID, days, l
 	out := []domain.BotEndUser{}
 	for rows.Next() {
 		var u domain.BotEndUser
-		if err := rows.Scan(&u.ID, &u.BotID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.BotID, &u.Platform, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.State, &u.IsBlocked, &u.FirstSeenAt, &u.LastSeenAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

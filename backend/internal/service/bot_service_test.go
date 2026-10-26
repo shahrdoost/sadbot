@@ -152,11 +152,49 @@ func TestUpdateBot_TokenChangeRestartsRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if f.runtime.IsRunning(bot.ID) {
-		t.Fatal("runtime must be stopped after token change")
+	if !f.runtime.IsRunning(bot.ID) {
+		t.Fatal("runtime must be running again after token change (restart)")
+	}
+	if f.runtime.Stopped != 1 || f.runtime.Started != 2 {
+		t.Fatalf("expected stop+start restart, got started=%d stopped=%d", f.runtime.Started, f.runtime.Stopped)
 	}
 	if f.validator.LastTok != newTok {
 		t.Fatal("validator must receive new token")
+	}
+}
+
+func TestUpdateBot_KatTokenChangeRestartsRuntime(t *testing.T) {
+	f := newTestBotService(t)
+	actor := superAdmin()
+	bot, err := f.svc.Create(context.Background(), actor, CreateBotInput{Name: "x", Token: validBotToken()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runtime.Start(context.Background(), bot); err != nil {
+		t.Fatal(err)
+	}
+
+	katTok := "987654:ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvu"
+	updated, err := f.svc.Update(context.Background(), actor, bot.ID, UpdateBotInput{KatToken: &katTok}, nil)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !f.runtime.IsRunning(bot.ID) {
+		t.Fatal("runtime must be running again after kat token change (restart)")
+	}
+	if f.runtime.Stopped != 1 || f.runtime.Started != 2 {
+		t.Fatalf("expected stop+start restart, got started=%d stopped=%d", f.runtime.Started, f.runtime.Stopped)
+	}
+	if updated.KatUsername == nil || *updated.KatUsername != "@testbot" {
+		t.Fatalf("kat username = %v", updated.KatUsername)
+	}
+	stored, err := f.bots.GetByID(context.Background(), bot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := pgcrypto.DecryptToken(testEncKey(), stored.KatTokenEncrypted)
+	if err != nil || dec != katTok {
+		t.Fatalf("stored kat token not properly encrypted: %v %q", err, dec)
 	}
 }
 

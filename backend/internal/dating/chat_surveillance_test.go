@@ -23,8 +23,8 @@ func TestChatSurveillance(t *testing.T) {
 	e.feed(t, e.sendB, "💘 مرور پروفایل‌ها")
 	e.feedCB(t, e.sendB, "act:browse:like")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if pA.Status != "chatting" || pB.Status != "chatting" {
 		t.Fatalf("precondition: both must be chatting, got %s / %s", pA.Status, pB.Status)
 	}
@@ -116,7 +116,7 @@ func TestChatTranscriptIgnoresOtherScenes(t *testing.T) {
 	ctx := context.Background()
 
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 
 	// user never chats; only talks from home + setup
 	e.feed(t, e.sendA, "📖 راهنما")

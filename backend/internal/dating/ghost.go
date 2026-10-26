@@ -66,20 +66,20 @@ func (s *Store) EnsureGhosts(ctx context.Context, botID uuid.UUID, n int) ([]dom
 	for i := count; i < n; i++ {
 		p := ghostPersonas[i]
 		tgID := int64(-10001 - i)
-		existing, err := s.dating.GetProfileByTelegramID(ctx, botID, tgID)
+		existing, err := s.dating.GetProfileByTelegramID(ctx, botID, domain.PlatformTelegram, tgID)
 		if err == nil && existing != nil {
 			if !existing.IsGhost {
 				_ = s.dating.SetGhost(ctx, botID, existing.UserID, p.Key)
 			}
 			continue
 		}
-		user, err := s.users.Upsert(ctx, botID, tgID, nil, &p.Name, nil)
+		user, err := s.users.Upsert(ctx, botID, domain.PlatformTelegram, tgID, nil, &p.Name, nil)
 		if err != nil {
 			log.Printf("[dating] ghost upsert: %v", err)
 			continue
 		}
 		userID := user.ID
-		if _, err := s.dating.EnsureProfile(ctx, botID, userID, tgID); err != nil {
+		if _, err := s.dating.EnsureProfile(ctx, botID, userID, domain.PlatformTelegram, tgID); err != nil {
 			continue
 		}
 		name, gender, age, province, city := p.Name, p.Gender, p.Age, p.Province, p.City
@@ -183,14 +183,15 @@ func (m *Matcher) injectGhosts(ctx context.Context, botID uuid.UUID) {
 			continue
 		}
 		_ = m.store.SetScene(ctx, botID.String(), lone.UserID, "chat")
-		if err := m.notify(botID, lone.TelegramID, m.text(botID, "match.search", "وصلت انجام شد!")+humanRules, chatKeyboard()); err != nil {
+		if err := m.notify(botID, lone.Platform, lone.TelegramID, m.text(botID, "match.search", "وصلت انجام شد!")+humanRules, chatKeyboard()); err != nil {
 			log.Printf("[dating] ghost notify: %v", err)
 		}
 		tg := lone.TelegramID
+		tgPlat := lone.Platform
 		openerDelay := time.Duration(priceInt(prices, "ghost_reply_delay_ms", 1500)) * time.Millisecond
 		go func() {
 			time.Sleep(openerDelay)
-			_ = m.notify(botID, tg, ghostOpener(), chatKeyboard())
+			_ = m.notify(botID, tgPlat, tg, ghostOpener(), chatKeyboard())
 		}()
 	}
 }

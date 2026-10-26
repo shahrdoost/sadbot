@@ -206,7 +206,7 @@ func (t *Template) Start(bc *engine.BotContext, payload string) bool {
 	ctx := engineBG()
 	botID := botUUID(bc)
 
-	profile, err := st.EnsureProfile(ctx, botID, bc.UserID, bc.TelegramID)
+	profile, err := st.EnsureProfile(ctx, botID, bc.UserID, bc.Platform, bc.TelegramID)
 	if err != nil {
 		log.Printf("[dating] ensure profile: %v", err)
 		return false
@@ -781,7 +781,7 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 		bc.Reply(fmt.Sprintf("کاربر جعلی رسانه دریافت نمی‌کنه. %s رو متنی بفرست.", label))
 		return true
 	}
-	partnerTelegram, err := partnerTelegramID(ctx, st, botID, *p.PartnerUserID)
+	partnerPlatform, partnerTelegram, err := partnerAddress(ctx, st, botID, *p.PartnerUserID)
 	if err != nil || partnerTelegram == 0 {
 		forceEndToRating(bc, st, botID, "partner_dead")
 		return true
@@ -791,7 +791,7 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 		return true
 	}
 
-	if _, err := bc.ForwardMediaTo(partnerTelegram, bc.ChatID, msg.MessageID); err != nil {
+	if _, err := bc.ForwardMediaToPlatform(partnerPlatform, partnerTelegram, bc.ChatID, msg.MessageID); err != nil {
 		if errors.Is(err, engine.ErrMediaUnsupported) {
 			bc.Reply("فقط متن منتقل میشه؛ رسانه در دسترس نیست.")
 		} else {
@@ -831,9 +831,9 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 			bc.ReplyKBD("مخاطبی برای بلاک وجود نداره.", chatRows)
 			return true
 		}
-		partnerTelegram, err := partnerTelegramID(ctx, st, botID, *p.PartnerUserID)
+		partnerPlatform, partnerTelegram, err := partnerAddress(ctx, st, botID, *p.PartnerUserID)
 		if err == nil && partnerTelegram > 0 {
-			_, _ = bc.SendKBDTo(partnerTelegram,
+			_, _ = bc.SendKBDToPlatform(partnerPlatform, partnerTelegram,
 				"🚫 مخاطب بلاک شد.\nمکالمه شما پایان یافت.\nبه مخاطبت امتیاز بده:",
 				ratingRows)
 			// notify rating scene on partner side: set scene via... partner state lives in DB;
@@ -864,7 +864,7 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 	if partnerIsGhost(ctx, st, botID, *p.PartnerUserID) {
 		return ghostHandleMessage(bc, st, botID, *p.PartnerUserID, text)
 	}
-	partnerTelegram, err := partnerTelegramID(ctx, st, botID, *p.PartnerUserID)
+	partnerPlatform, partnerTelegram, err := partnerAddress(ctx, st, botID, *p.PartnerUserID)
 	if err != nil || partnerTelegram == 0 {
 		forceEndToRating(bc, st, botID, "partner_dead")
 		return true
@@ -876,10 +876,10 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 	}
 	// reply mapping (kpkchat chat-reply-map)
 	replyTo, _ := st.ResolveReply(ctx, botID, bc.UserID, bc.MsgID)
-	sent, err := bc.SendTo(partnerTelegram, text, replyTo)
+	sent, err := bc.SendToPlatform(partnerPlatform, partnerTelegram, text, replyTo)
 	if err != nil {
 		// retry once without reply anchor (kpkchat fix)
-		sent, err = bc.SendTo(partnerTelegram, text, 0)
+		sent, err = bc.SendToPlatform(partnerPlatform, partnerTelegram, text, 0)
 		if err != nil {
 			forceEndToRating(bc, st, botID, "partner_unreachable")
 			return true
@@ -893,12 +893,14 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 	return true
 }
 
-func partnerTelegramID(ctx context.Context, st *Store, botID uuid.UUID, partnerUserID int64) (int64, error) {
+// partnerAddress returns the partner's chat address (platform + external id)
+// — the platform decides which endpoint the message goes out on.
+func partnerAddress(ctx context.Context, st *Store, botID uuid.UUID, partnerUserID int64) (string, int64, error) {
 	partnerProfile, err := st.Profile(ctx, botID, partnerUserID)
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
-	return partnerProfile.TelegramID, nil
+	return partnerProfile.Platform, partnerProfile.TelegramID, nil
 }
 
 // --- rating ---
@@ -963,13 +965,13 @@ func forceEndToRating(bc *engine.BotContext, st *Store, botID uuid.UUID, reason 
 		return
 	}
 	if p.PartnerUserID != nil {
-		partnerTelegram, perr := partnerTelegramID(ctx, st, botID, *p.PartnerUserID)
+		partnerPlatform, partnerTelegram, perr := partnerAddress(ctx, st, botID, *p.PartnerUserID)
 		if perr == nil && partnerTelegram > 0 {
 			msg := "مخاطب چت رو ترک کرد.\nبه مخاطبت امتیاز بده:"
 			if reason == "partner_dead" || reason == "partner_unreachable" {
 				msg = "مخاطب در دسترس نیست.\nمکالمه پایان یافت."
 			}
-			_, _ = bc.SendKBDTo(partnerTelegram, msg, ratingRows)
+			_, _ = bc.SendKBDToPlatform(partnerPlatform, partnerTelegram, msg, ratingRows)
 		}
 		if err := st.EndChatForBoth(ctx, botID, bc.UserID, *p.PartnerUserID); err != nil {
 			log.Printf("[dating] end chat both: %v", err)

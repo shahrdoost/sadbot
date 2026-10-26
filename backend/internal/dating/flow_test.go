@@ -22,6 +22,9 @@ type fakeSender struct {
 	sent     []sentMsg
 	edits    []sentMsg
 	forwards []forwardedMedia
+	// forwardErr, when set, makes ForwardMedia fail (e.g. Kat's missing
+	// forwardMessage → telegram.ErrUnsupported).
+	forwardErr error
 }
 
 // forwardedMedia records a media relay so tests can assert who received what.
@@ -50,6 +53,9 @@ func (f *fakeSender) Edit(ctx context.Context, chatID, msgID int64, text string,
 
 // ForwardMedia satisfies engine.MediaForwarder so the chat relay is testable.
 func (f *fakeSender) ForwardMedia(ctx context.Context, fromChatID, toChatID, messageID int64) (*telegram.Message, error) {
+	if f.forwardErr != nil {
+		return nil, f.forwardErr
+	}
 	f.forwards = append(f.forwards, forwardedMedia{FromChatID: fromChatID, ToChatID: toChatID, MessageID: messageID})
 	return &telegram.Message{MessageID: messageID, Chat: telegram.Chat{ID: toChatID}}, nil
 }
@@ -82,17 +88,19 @@ type memUsers struct {
 
 func newMemUsers() *memUsers { return &memUsers{states: map[int64]json.RawMessage{}, next: 1000} }
 
-func (m *memUsers) Upsert(ctx context.Context, botID string, telegramID int64, username, firstName, lastName *string) (int64, error) {
+func (m *memUsers) Upsert(ctx context.Context, botID, platform string, telegramID int64, username, firstName, lastName *string) (int64, error) {
 	for id, raw := range m.states {
 		var st map[string]any
 		_ = json.Unmarshal(raw, &st)
 		if tid, _ := st["__tid"].(float64); int64(tid) == telegramID {
-			return id, nil
+			if plat, _ := st["__plat"].(string); plat == platform {
+				return id, nil
+			}
 		}
 	}
 	m.next++
 	id := m.next
-	raw, _ := json.Marshal(map[string]any{"scene": "home", "data": map[string]any{}, "__tid": telegramID})
+	raw, _ := json.Marshal(map[string]any{"scene": "home", "data": map[string]any{}, "__tid": telegramID, "__plat": platform})
 	m.states[id] = raw
 	return id, nil
 }
@@ -179,11 +187,11 @@ func TestFullChatFlow(t *testing.T) {
 		case sendB:
 			tid = 222
 		}
-		userID, err := users.Upsert(ctx, bot.ID.String(), tid, nil, nil, nil)
+		userID, err := users.Upsert(ctx, bot.ID.String(), "telegram", tid, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
-		_, _ = store.EnsureProfile(ctx, bot.ID, userID, tid)
+		_, _ = store.EnsureProfile(ctx, bot.ID, userID, "telegram", tid)
 		upd := &telegram.Update{
 			Message: &telegram.Message{
 				MessageID: time.Now().UnixNano() % 100000,
@@ -192,7 +200,7 @@ func TestFullChatFlow(t *testing.T) {
 				Text:      text,
 			},
 		}
-		eng.HandleUpdate(ctx, &domain.Bot{ID: bot.ID, TemplateKey: domain.TemplateDating}, sender, upd)
+		eng.HandleUpdate(ctx, "telegram", &domain.Bot{ID: bot.ID, TemplateKey: domain.TemplateDating}, sender, upd)
 	}
 
 	// --- onboarding user A (male, 25, Tehran) ---
@@ -213,7 +221,7 @@ func TestFullChatFlow(t *testing.T) {
 	feed(sendB, 222, "خانومم")
 	feed(sendB, 222, "⏭ رد شد") // skip optional avatar step
 
-	pA, err := store.ProfileByTelegram(ctx, bot.ID, 111)
+	pA, err := store.ProfileByTelegram(ctx, bot.ID, "", 111)
 	if err != nil || !IsProfileComplete(pA) {
 		t.Fatalf("profile A incomplete: %+v err=%v", pA, err)
 	}
@@ -224,7 +232,7 @@ func TestFullChatFlow(t *testing.T) {
 	feed(sendB, 222, "🔗 به یک ناشناس وصلم کن")
 	feed(sendB, 222, "🔗 غریبه")
 
-	m := NewMatcher(store, staticBots{bot.ID}, func(botID uuid.UUID, chatID int64, text string, kbd json.RawMessage) error {
+	m := NewMatcher(store, staticBots{bot.ID}, func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
 		if chatID == 111 {
 			sendA.sent = append(sendA.sent, sentMsg{ChatID: chatID, Text: text, ReplyMark: kbd})
 		} else {
@@ -234,8 +242,8 @@ func TestFullChatFlow(t *testing.T) {
 	})
 	m.matchOnce(ctx, bot.ID)
 
-	pA, _ = store.ProfileByTelegram(ctx, bot.ID, 111)
-	pB, _ := store.ProfileByTelegram(ctx, bot.ID, 222)
+	pA, _ = store.ProfileByTelegram(ctx, bot.ID, "", 111)
+	pB, _ := store.ProfileByTelegram(ctx, bot.ID, "", 222)
 	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
 		t.Fatalf("expected both chatting: A=%s B=%s", pA.Status, pB.Status)
 	}
@@ -260,8 +268,8 @@ func TestFullChatFlow(t *testing.T) {
 
 	// --- A ends the chat → pending rate both ---
 	feed(sendA, 111, "🛑 قطع مکالمه")
-	pA, _ = store.ProfileByTelegram(ctx, bot.ID, 111)
-	pB, _ = store.ProfileByTelegram(ctx, bot.ID, 222)
+	pA, _ = store.ProfileByTelegram(ctx, bot.ID, "", 111)
+	pB, _ = store.ProfileByTelegram(ctx, bot.ID, "", 222)
 	if pA.Status != domain.DatingJoined || pB.Status != domain.DatingJoined {
 		t.Fatalf("expected joined after end: A=%s B=%s", pA.Status, pB.Status)
 	}
@@ -271,7 +279,7 @@ func TestFullChatFlow(t *testing.T) {
 
 	// --- B rates 5 stars ---
 	feed(sendB, 222, "⭐⭐⭐⭐⭐")
-	pA, _ = store.ProfileByTelegram(ctx, bot.ID, 111)
+	pA, _ = store.ProfileByTelegram(ctx, bot.ID, "", 111)
 	if pA.TotalRatings != 1 || pA.RatingSum != 5 {
 		t.Fatalf("rating not applied: %+v", pA)
 	}
@@ -296,6 +304,8 @@ type browseEnv struct {
 	sendB  *fakeSender
 	mod    *postgres.ModerationRepo
 	prices map[string]any
+	// platform per sender; defaults to "telegram", cross-platform tests set kat.
+	platA, platB string
 }
 
 func newBrowseEnv(t *testing.T) *browseEnv {
@@ -330,7 +340,7 @@ func newBrowseEnv(t *testing.T) *browseEnv {
 	registry.Register(&Template{})
 	users := runtime.NewUserStoreAdapter(userRepo)
 	mod := postgres.NewModerationRepo(pool)
-	env := &browseEnv{botID: bot.ID, store: store, users: users, sendA: &fakeSender{}, sendB: &fakeSender{}, mod: mod, prices: map[string]any{}}
+	env := &browseEnv{botID: bot.ID, store: store, users: users, sendA: &fakeSender{}, sendB: &fakeSender{}, mod: mod, prices: map[string]any{}, platA: "telegram", platB: "telegram"}
 	// real event store (not the in-memory stub) so surveillance tests can read
 	// the chat-scene messages back out of the database
 	adminEv := runtime.NewEventStoreAdapter(postgres.NewEventRepo(pool))
@@ -349,16 +359,25 @@ func (e *browseEnv) tid(sender *fakeSender) int64 {
 	return 222
 }
 
+// plat returns the platform the given sender's user lives on.
+func (e *browseEnv) plat(sender *fakeSender) string {
+	if sender == e.sendA {
+		return e.platA
+	}
+	return e.platB
+}
+
 func (e *browseEnv) feed(t *testing.T, sender *fakeSender, text string) {
 	t.Helper()
 	ctx := context.Background()
 	tid := e.tid(sender)
-	userID, err := e.users.Upsert(ctx, e.botID.String(), tid, nil, nil, nil)
+	plat := e.plat(sender)
+	userID, err := e.users.Upsert(ctx, e.botID.String(), plat, tid, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, tid)
-	e.eng.HandleUpdate(ctx, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
+	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, plat, tid)
+	e.eng.HandleUpdate(ctx, plat, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
 		Message: &telegram.Message{
 			MessageID: time.Now().UnixNano() % 100000,
 			From:      &telegram.User{ID: tid, FirstName: "t"},
@@ -372,7 +391,7 @@ func (e *browseEnv) feedCB(t *testing.T, sender *fakeSender, data string) {
 	t.Helper()
 	ctx := context.Background()
 	tid := e.tid(sender)
-	e.eng.HandleUpdate(ctx, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
+	e.eng.HandleUpdate(ctx, e.plat(sender), &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
 		CallbackQuery: &telegram.CallbackQuery{
 			ID:   "cb",
 			From: telegram.User{ID: tid},
@@ -389,12 +408,13 @@ func (e *browseEnv) feedPhoto(t *testing.T, sender *fakeSender, fileID string) {
 	t.Helper()
 	ctx := context.Background()
 	tid := e.tid(sender)
-	userID, err := e.users.Upsert(ctx, e.botID.String(), tid, nil, nil, nil)
+	plat := e.plat(sender)
+	userID, err := e.users.Upsert(ctx, e.botID.String(), plat, tid, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, tid)
-	e.eng.HandleUpdate(ctx, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
+	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, plat, tid)
+	e.eng.HandleUpdate(ctx, plat, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender, &telegram.Update{
 		Message: &telegram.Message{
 			MessageID: time.Now().UnixNano() % 100000,
 			From:      &telegram.User{ID: tid},
@@ -433,8 +453,8 @@ func TestBrowseMutualLikeFlow(t *testing.T) {
 
 	// A likes B — no mutual yet
 	e.feedCB(t, e.sendA, "act:browse:like")
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if pA.Status != domain.DatingJoined || pB.Status != domain.DatingJoined {
 		t.Fatalf("one-sided like must not connect: A=%s B=%s", pA.Status, pB.Status)
 	}
@@ -449,8 +469,8 @@ func TestBrowseMutualLikeFlow(t *testing.T) {
 	}
 	e.feedCB(t, e.sendB, "act:browse:like")
 
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
 		t.Fatalf("mutual like must connect: A=%s B=%s", pA.Status, pB.Status)
 	}
@@ -480,8 +500,8 @@ func TestBrowsePassExcludesCard(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "فعلاً") {
 		t.Fatalf("A should see empty pool after pass: %+v", e.sendA.sent)
 	}
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if liked, _ := e.store.Repo().HasLiked(ctx, e.botID, pA.UserID, pB.UserID); liked {
 		t.Fatal("pass must not count as like")
 	}
@@ -494,13 +514,13 @@ func TestAvatarBonusOnce(t *testing.T) {
 	ctx := context.Background()
 
 	e.onboard(t, e.sendA, "امیر", "25", "آقام")
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 5 {
 		t.Fatalf("signup bonus should be 5, got %d", pA.Coins)
 	}
 
 	e.feedPhoto(t, e.sendA, "file-avatar-1")
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.PhotoFileID == nil || *pA.PhotoFileID != "file-avatar-1" {
 		t.Fatalf("photo not saved: %+v", pA.PhotoFileID)
 	}

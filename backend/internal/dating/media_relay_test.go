@@ -14,15 +14,16 @@ import (
 func (e *browseEnv) feedMedia(t *testing.T, sender *fakeSender, msg *telegram.Message) {
 	t.Helper()
 	tid := e.tid(sender)
+	plat := e.plat(sender)
 	ctx := context.Background()
-	userID, err := e.users.Upsert(ctx, e.botID.String(), tid, nil, nil, nil)
+	userID, err := e.users.Upsert(ctx, e.botID.String(), plat, tid, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, tid)
+	_, _ = e.store.EnsureProfile(ctx, e.botID, userID, plat, tid)
 	msg.From = &telegram.User{ID: tid}
 	msg.Chat = telegram.Chat{ID: tid, Type: "private"}
-	e.eng.HandleUpdate(ctx, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender,
+	e.eng.HandleUpdate(ctx, plat, &domain.Bot{ID: e.botID, TemplateKey: domain.TemplateDating}, sender,
 		&telegram.Update{Message: msg})
 }
 
@@ -41,8 +42,8 @@ func connectPair(t *testing.T, e *browseEnv) {
 	e.feedCB(t, e.sendB, "act:browse:like")
 
 	ctx := context.Background()
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
 		t.Fatalf("precondition: both must be chatting, got %s / %s", pA.Status, pB.Status)
 	}
@@ -75,13 +76,13 @@ func TestChatMediaRelay(t *testing.T) {
 	}
 
 	// the chat must still be alive (media doesn't end it)
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Status != domain.DatingChatting {
 		t.Fatalf("media relay must not end the chat, status=%s", pA.Status)
 	}
 
 	// transcript must record the media for the panel
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	rows, err := e.store.Repo().ChatTranscript(ctx, e.botID, pA.UserID, pB.UserID)
 	if err != nil {
 		t.Fatalf("transcript: %v", err)
@@ -124,8 +125,8 @@ func TestChatMediaRelay_StickerAndVoice(t *testing.T) {
 		t.Fatalf("B's voice must reach 111, got %d", e.sendB.forwards[0].ToChatID)
 	}
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
-	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, 222)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
 	rows, _ := e.store.Repo().ChatTranscript(ctx, e.botID, pA.UserID, pB.UserID)
 	if len(rows) != 2 {
 		t.Fatalf("both media must land in the transcript, got %d", len(rows))

@@ -16,6 +16,7 @@ const (
 type DatingProfile struct {
 	BotID             uuid.UUID  `json:"bot_id"`
 	UserID            int64      `json:"user_id"` // bot_end_users.id
+	Platform          string     `json:"platform"`
 	TelegramID        int64      `json:"telegram_id"`
 	Name              *string    `json:"name,omitempty"`
 	Gender            *string    `json:"gender,omitempty"`

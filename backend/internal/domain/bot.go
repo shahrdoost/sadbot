@@ -31,6 +31,8 @@ type Bot struct {
 	Name             string     `json:"name"`
 	TelegramUsername *string    `json:"telegram_username,omitempty"`
 	TokenEncrypted   []byte     `json:"-"`
+	KatUsername      *string    `json:"kat_username,omitempty"`
+	KatTokenEncrypted []byte    `json:"-"`
 	TemplateKey      string     `json:"template_key"`
 	Status           string     `json:"status"`
 	LastError        *string    `json:"last_error,omitempty"`

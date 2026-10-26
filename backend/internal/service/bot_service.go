@@ -21,6 +21,7 @@ type BotRepository interface {
 	ListByAdmin(ctx context.Context, adminID uuid.UUID, isSuper bool) ([]domain.Bot, error)
 	Update(ctx context.Context, id uuid.UUID, name *string, username *string, templateKey *string) (*domain.Bot, error)
 	UpdateToken(ctx context.Context, id uuid.UUID, tokenEnc []byte, username *string) error
+	UpdateKatToken(ctx context.Context, id uuid.UUID, tokenEnc []byte, username *string) error
 	SetStatus(ctx context.Context, id uuid.UUID, status string, lastError *string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -31,9 +32,9 @@ type ConfigRepository interface {
 	EnsureDefault(ctx context.Context, botID uuid.UUID, texts, menus, flags, prices []byte) (*domain.BotConfig, error)
 }
 
-// TokenValidator checks a candidate bot token against Telegram.
+// TokenValidator checks a candidate bot token against its platform's endpoint.
 type TokenValidator interface {
-	ValidateToken(ctx context.Context, token string) (username string, err error)
+	ValidateToken(ctx context.Context, platform, token string) (username string, err error)
 }
 
 // RuntimeController starts/stops a bot's polling runtime.
@@ -63,6 +64,7 @@ var tokenRe = regexp.MustCompile(`^\d{6,12}:[A-Za-z0-9_-]{30,}$`)
 type CreateBotInput struct {
 	Name        string `json:"name"`
 	Token       string `json:"token"`
+	KatToken    string `json:"kat_token"` // optional: Kat-side twin token
 	TemplateKey string `json:"template_key"`
 }
 
@@ -76,13 +78,16 @@ func (s *BotService) Create(ctx context.Context, actor *domain.Admin, in CreateB
 	if !tokenRe.MatchString(in.Token) {
 		return nil, errors.New("توکن ربات نامعتبر است (فرمت: 123456:ABC-DEF...)")
 	}
+	if in.KatToken != "" && !tokenRe.MatchString(in.KatToken) {
+		return nil, errors.New("توکن کت نامعتبر است (فرمت: 123456:ABC-DEF...)")
+	}
 	if in.TemplateKey == "" {
 		in.TemplateKey = domain.TemplateWelcomeMenu
 	}
 	if _, ok := s.registry.Get(in.TemplateKey); !ok {
 		return nil, fmt.Errorf("تمپلیت نامعتبر: %s", in.TemplateKey)
 	}
-	username, err := s.validate.ValidateToken(ctx, in.Token)
+	username, err := s.validate.ValidateToken(ctx, domain.PlatformTelegram, in.Token)
 	if err != nil {
 		// do not echo the raw error: it may contain the token in the request URL
 		return nil, errors.New("توکن توسط تلگرام پذیرفته نشد؛ توکن را بررسی کنید")
@@ -94,6 +99,20 @@ func (s *BotService) Create(ctx context.Context, actor *domain.Admin, in CreateB
 	bot, err := s.bots.Create(ctx, in.Name, &username, enc, in.TemplateKey, actor.ID)
 	if err != nil {
 		return nil, err
+	}
+	if in.KatToken != "" {
+		katUser, kerr := s.validate.ValidateToken(ctx, domain.PlatformKat, in.KatToken)
+		if kerr != nil {
+			return nil, errors.New("توکن کت پذیرفته نشد؛ توکن را بررسی کنید")
+		}
+		encKat, kerr := pgcrypto.EncryptToken(s.key, in.KatToken)
+		if kerr != nil {
+			return nil, kerr
+		}
+		if kerr := s.bots.UpdateKatToken(ctx, bot.ID, encKat, &katUser); kerr != nil {
+			return nil, kerr
+		}
+		bot, _ = s.bots.GetByID(ctx, bot.ID)
 	}
 	// seed default config from template
 	tpl, _ := s.registry.Get(in.TemplateKey)
@@ -127,6 +146,7 @@ type UpdateBotInput struct {
 	Name        *string `json:"name"`
 	TemplateKey *string `json:"template_key"`
 	Token       *string `json:"token"`
+	KatToken    *string `json:"kat_token"` // set/replace the Kat twin token
 }
 
 func (s *BotService) Update(ctx context.Context, actor *domain.Admin, id uuid.UUID, in UpdateBotInput, ip *string) (*domain.Bot, error) {
@@ -143,11 +163,12 @@ func (s *BotService) Update(ctx context.Context, actor *domain.Admin, id uuid.UU
 		}
 	}
 	var username *string
+	tokenChanged := false
 	if in.Token != nil && *in.Token != "" {
 		if !tokenRe.MatchString(*in.Token) {
 			return nil, errors.New("توکن ربات نامعتبر است")
 		}
-		u, err := s.validate.ValidateToken(ctx, *in.Token)
+		u, err := s.validate.ValidateToken(ctx, domain.PlatformTelegram, *in.Token)
 		if err != nil {
 			return nil, errors.New("توکن توسط تلگرام پذیرفته نشد؛ توکن را بررسی کنید")
 		}
@@ -158,14 +179,33 @@ func (s *BotService) Update(ctx context.Context, actor *domain.Admin, id uuid.UU
 		if err := s.bots.UpdateToken(ctx, id, enc, &u); err != nil {
 			return nil, err
 		}
-		// restart runtime if it was running with the old token
-		if s.runtime.IsRunning(id) {
-			_ = s.runtime.Stop(ctx, id)
+		tokenChanged = true
+	}
+	if in.KatToken != nil && *in.KatToken != "" {
+		if !tokenRe.MatchString(*in.KatToken) {
+			return nil, errors.New("توکن کت نامعتبر است")
 		}
+		katUser, err := s.validate.ValidateToken(ctx, domain.PlatformKat, *in.KatToken)
+		if err != nil {
+			return nil, errors.New("توکن کت پذیرفته نشد؛ توکن را بررسی کنید")
+		}
+		encKat, err := pgcrypto.EncryptToken(s.key, *in.KatToken)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.bots.UpdateKatToken(ctx, id, encKat, &katUser); err != nil {
+			return nil, err
+		}
+		tokenChanged = true
 	}
 	bot, err := s.bots.Update(ctx, id, in.Name, username, in.TemplateKey)
 	if err != nil {
 		return nil, err
+	}
+	// restart runtime so the new token takes effect without a manual stop/start
+	if tokenChanged && s.runtime.IsRunning(id) {
+		_ = s.runtime.Stop(ctx, id)
+		_ = s.runtime.Start(ctx, bot)
 	}
 	_ = s.audit.Insert(ctx, &actor.ID, "bot.update", "bot", id.String(), &id, nil, ip)
 	return bot, nil

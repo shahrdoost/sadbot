@@ -93,10 +93,10 @@ func (r *BroadcastRepo) BroadcastAudienceCount(ctx context.Context, botID uuid.U
 	return n, err
 }
 
-// BroadcastPage returns a batch of (userID, telegramID) after a cursor.
+// BroadcastPage returns a batch of (userID, platform, telegramID) after a cursor.
 func (r *BroadcastRepo) BroadcastPage(ctx context.Context, botID uuid.UUID, afterID int64, limit int) ([]UserChat, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, telegram_id FROM bot_end_users
+		SELECT id, platform, telegram_id FROM bot_end_users
 		WHERE bot_id = $1 AND telegram_id > 0 AND NOT is_blocked AND id > $2
 		ORDER BY id LIMIT $3`, botID, afterID, limit)
 	if err != nil {
@@ -106,7 +106,7 @@ func (r *BroadcastRepo) BroadcastPage(ctx context.Context, botID uuid.UUID, afte
 	var out []UserChat
 	for rows.Next() {
 		var u UserChat
-		if err := rows.Scan(&u.UserID, &u.TelegramID); err != nil {
+		if err := rows.Scan(&u.UserID, &u.Platform, &u.TelegramID); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -117,5 +117,6 @@ func (r *BroadcastRepo) BroadcastPage(ctx context.Context, botID uuid.UUID, afte
 // UserChat is a minimal chat target.
 type UserChat struct {
 	UserID     int64
+	Platform   string
 	TelegramID int64
 }

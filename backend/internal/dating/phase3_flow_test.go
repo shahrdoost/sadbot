@@ -32,7 +32,7 @@ func TestGhostChatFlow(t *testing.T) {
 	e.feed(t, e.sendA, "🔗 به یک ناشناس وصلم کن")
 	e.feed(t, e.sendA, "🔗 غریبه")
 
-	m := NewMatcher(e.store, staticBots{e.botID}, func(botID uuid.UUID, chatID int64, text string, kbd json.RawMessage) error {
+	m := NewMatcher(e.store, staticBots{e.botID}, func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
 		if chatID == 111 {
 			e.sendA.sent = append(e.sendA.sent, sentMsg{ChatID: chatID, Text: text, ReplyMark: kbd})
 		}
@@ -41,7 +41,7 @@ func TestGhostChatFlow(t *testing.T) {
 	m.SetPricesFunc(func(uuid.UUID) map[string]any { return e.prices })
 	m.injectGhosts(ctx, e.botID)
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Status != domain.DatingChatting || pA.PartnerUserID == nil {
 		t.Fatalf("lone searcher must be paired with a ghost: %+v", pA)
 	}
@@ -58,7 +58,7 @@ func TestGhostChatFlow(t *testing.T) {
 		e.feed(t, e.sendA, "سلام، حالت چطوره؟")
 		time.Sleep(50 * time.Millisecond) // async ghost reply + home transition
 	}
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Status != domain.DatingJoined {
 		t.Fatalf("ghost chat must end after budget: %s", pA.Status)
 	}
@@ -91,7 +91,7 @@ func TestConfessionFlow(t *testing.T) {
 	}
 	e.feed(t, e.sendA, "✅ ثبت اعتراف")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 3 { // 5 signup - 2 confess
 		t.Fatalf("confession must cost 2 coins, got %d", pA.Coins)
 	}

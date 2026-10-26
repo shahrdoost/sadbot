@@ -13,7 +13,7 @@ import (
 )
 
 // Notifier sends a message to a chat on behalf of a bot (injected; testable).
-type Notifier func(botID uuid.UUID, chatID int64, text string, kbd json.RawMessage) error
+type Notifier func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error
 
 // Matcher runs the global 5s matching loop + search timeout sweep for all
 // running dating bots (kpkchat match-queue + search-timer port).
@@ -254,7 +254,7 @@ func (m *Matcher) notifyMatch(botID uuid.UUID, a, b Searcher) {
 	text := m.text(botID, "match.search", "وصلت انجام شد!") + humanRules
 	kbd := chatKeyboard()
 	for _, target := range []Searcher{a, b} {
-		if err := m.notify(botID, target.TelegramID, text, kbd); err != nil {
+		if err := m.notify(botID, target.Platform, target.TelegramID, text, kbd); err != nil {
 			log.Printf("[matcher] notify %d: %v", target.TelegramID, err)
 		}
 	}
@@ -276,7 +276,7 @@ func (m *Matcher) sweepTimeouts(ctx context.Context, botID uuid.UUID) {
 		if err != nil {
 			continue
 		}
-		_ = m.notify(botID, p.TelegramID, "جستجو لغو شد.", mustKBStyled(homeKB))
+		_ = m.notify(botID, p.Platform, p.TelegramID, "جستجو لغو شد.", mustKBStyled(homeKB))
 	}
 }
 

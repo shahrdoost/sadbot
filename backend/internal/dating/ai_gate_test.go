@@ -18,7 +18,7 @@ func TestAIGateFromPanel(t *testing.T) {
 	e.feed(t, e.sendA, "⏭ رد شد") // finish onboarding (photo step is optional)
 
 	scene := func() string {
-		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 		if err != nil || p == nil {
 			return ""
 		}

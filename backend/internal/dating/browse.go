@@ -404,7 +404,7 @@ func browseReact(bc *engine.BotContext, st *Store, kind string) bool {
 		finishCard(bc, "⭐ سوپرلایک ثبت شد! اگر طرف هم تو رو لایک کنه وصل می‌شید.")
 		// one-sided superlike: ping the recipient (kpkchat parity)
 		if tp, err := st.Profile(ctx, botID, target); err == nil && !tp.IsGhost {
-			_, _ = bc.SendTo(tp.TelegramID, "⭐ کسی به پروفایلت سوپرلایک زد!\nبا مرور پروفایل‌ها می‌تونی پیداش کنی.", 0)
+			_, _ = bc.SendToPlatform(tp.Platform, tp.TelegramID, "⭐ کسی به پروفایلت سوپرلایک زد!\nبا مرور پروفایل‌ها می‌تونی پیداش کنی.", 0)
 		}
 	} else {
 		finishCard(bc, "✅ لایک ثبت شد.")
@@ -474,7 +474,7 @@ func notifyBrowseConnect(bc *engine.BotContext, st *Store, target int64, via str
 	targetProfile, err := st.Profile(ctx, botID, target)
 	if err == nil {
 		_ = st.SetScene(ctx, botID.String(), target, "chat")
-		if _, sendErr := bc.SendKBDTo(targetProfile.TelegramID, text, chatRows); sendErr != nil {
+		if _, sendErr := bc.SendKBDToPlatform(targetProfile.Platform, targetProfile.TelegramID, text, chatRows); sendErr != nil {
 			log.Printf("[dating] browse notify partner %d: %v", targetProfile.TelegramID, sendErr)
 		}
 	}

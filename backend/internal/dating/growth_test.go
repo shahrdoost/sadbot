@@ -29,7 +29,7 @@ func TestStreakAndBoost(t *testing.T) {
 	// first home-scene interaction records the streak
 	e.feed(t, e.sendA, "📖 راهنما")
 
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.StreakCount != 1 {
 		t.Fatalf("home interaction must start streak=1, got %d", pA.StreakCount)
 	}
@@ -43,14 +43,14 @@ func TestStreakAndBoost(t *testing.T) {
 
 	// same-day interaction does not double-count
 	e.feed(t, e.sendA, "💰 سکه")
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.StreakCount != 1 || pA.Coins != 6 {
 		t.Fatalf("same-day must not re-award: streak=%d coins=%d", pA.StreakCount, pA.Coins)
 	}
 
 	// boost: 1h costs 2 coins
 	e.feedCB(t, e.sendA, "act:boost:1")
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 4 {
 		t.Fatalf("boost must cost 2 coins, got %d", pA.Coins)
 	}
@@ -63,7 +63,7 @@ func TestStreakAndBoost(t *testing.T) {
 
 	// boost with insufficient coins fails
 	e.feedCB(t, e.sendA, "act:boost:24") // costs 10 > 4
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Coins != 4 {
 		t.Fatalf("failed boost must not spend: %d", pA.Coins)
 	}
@@ -87,7 +87,7 @@ func TestPaidNameEdit(t *testing.T) {
 	// first edit is free
 	e.feedCB(t, e.sendA, "act:edit:name")
 	e.feed(t, e.sendA, "رضا")
-	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Name == nil || *pA.Name != "رضا" {
 		t.Fatalf("name not updated: %+v", pA.Name)
 	}
@@ -120,7 +120,7 @@ func TestPaidNameEdit(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "سکه کافی نیست") {
 		t.Fatalf("insufficient coins expected: %+v", e.sendA.sent)
 	}
-	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, 111)
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
 	if pA.Name == nil || *pA.Name != "رضا" {
 		t.Fatalf("name must be unchanged after refused edit: %+v", pA.Name)
 	}
