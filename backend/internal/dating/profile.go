@@ -160,13 +160,13 @@ func profileEditAction(bc *engine.BotContext, st *Store, botID uuid.UUID, what s
 		switch what {
 		case "age":
 			setStep(bc, "setage")
-			bc.ReplyKBD("🎂 سن جدید رو انتخاب کن (۱۸ تا ۷۰):", ageRows())
+			bc.ReplyKBD("🎂 سن جدید رو انتخاب کن (۱۸ تا ۷۰):", withHomeRow(ageRows()))
 		case "gender":
 			setStep(bc, "setgender")
-			bc.ReplyKBD("جنسیت خود را انتخاب کن:", genderRows(pw(p.Age)))
+			bc.ReplyKBD("جنسیت خود را انتخاب کن:", withHomeRow(genderRows(pw(p.Age))))
 		default: // location
 			setStep(bc, "setprovince")
-			bc.ReplyKBD("📍 استان جدید رو انتخاب کن:\n(بعد شهر رو هم می‌پرسم)", provinceRows())
+			bc.ReplyKBD("📍 استان جدید رو انتخاب کن:\n(بعد شهر رو هم می‌پرسم)", withHomeRow(provinceRows()))
 		}
 		return true
 	}

@@ -88,6 +88,10 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 		return false
 	}
 	botID, _ := uuid.Parse(bc.BotID)
+	// engine strips the "act:" prefix before dispatch; normalize it back
+	if !strings.HasPrefix(action, "act:") {
+		action = "act:" + action
+	}
 	switch action {
 	case "act:tap":
 		t.doTap(bc, repo, botID)

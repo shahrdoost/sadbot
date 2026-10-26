@@ -48,10 +48,17 @@ func (r *BombLandRepo) AddBombs(ctx context.Context, botID uuid.UUID, userID int
 }
 
 func (r *BombLandRepo) SellAll(ctx context.Context, botID uuid.UUID, userID int64, pricePerBomb int) (bombsSold, moneyEarned int, err error) {
+	// CTE captures the pre-update bomb count: RETURNING sees NEW values,
+	// and bombs is zeroed by this very UPDATE.
 	err = r.db.QueryRow(ctx, `
+		WITH sale AS (
+			SELECT bombs AS qty FROM bombland_players
+			WHERE bot_id=$1 AND user_id=$2 AND bombs > 0
+		)
 		UPDATE bombland_players SET money = money + bombs * $3, bombs = 0
 		WHERE bot_id=$1 AND user_id=$2 AND bombs > 0
-		RETURNING bombs, bombs * $3`, botID, userID, pricePerBomb).Scan(&bombsSold, &moneyEarned)
+		RETURNING (SELECT qty FROM sale), (SELECT qty * $3 FROM sale)`,
+		botID, userID, pricePerBomb).Scan(&bombsSold, &moneyEarned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, 0, nil
 	}
@@ -70,12 +77,17 @@ func (r *BombLandRepo) TryUpgrade(ctx context.Context, botID uuid.UUID, userID i
 
 // CatchUpAuto applies offline auto-production since last_auto.
 func (r *BombLandRepo) CatchUpAuto(ctx context.Context, botID uuid.UUID, userID int64, ratePerMin int) (produced int, err error) {
+	// CTE computes production from the OLD last_auto — RETURNING would see
+	// the value after `last_auto = now()` and always report 0.
 	err = r.db.QueryRow(ctx, `
-		UPDATE bombland_players SET
-			bombs = bombs + GREATEST(0, floor(extract(epoch from (now() - last_auto)) / 60)::int * $3 * auto_lvl),
-			last_auto = now()
+		WITH calc AS (
+			SELECT GREATEST(0, floor(extract(epoch from (now() - last_auto)) / 60)::int * $3 * auto_lvl) AS n
+			FROM bombland_players
+			WHERE bot_id=$1 AND user_id=$2 AND auto_lvl > 0
+		)
+		UPDATE bombland_players SET bombs = bombs + (SELECT n FROM calc), last_auto = now()
 		WHERE bot_id=$1 AND user_id=$2 AND auto_lvl > 0
-		RETURNING GREATEST(0, floor(extract(epoch from (now() - last_auto)) / 60)::int * $3 * auto_lvl)`,
+		RETURNING (SELECT n FROM calc)`,
 		botID, userID, ratePerMin).Scan(&produced)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil

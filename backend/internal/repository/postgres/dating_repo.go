@@ -1261,9 +1261,10 @@ func (r *DatingRepo) ChatTranscript(ctx context.Context, botID uuid.UUID, userA,
 	return out, rows.Err()
 }
 
-// ChatPreview is one recent chat-scene message for the global feed. Only
-// user-typed text is persisted (the relay itself is never logged), so every
-// row is a message one participant typed; the other side received it.
+// ChatPreview is one recent chat-scene message for the global feed. Every
+// typed message is logged twice: the sender's inbound event plus the partner's
+// outbound mirror (RecordOutboundForPartner), so the panel feed shows both
+// directions of the conversation — IsOutbound marks the mirrored half.
 type ChatPreview struct {
 	EventID       int64     `json:"event_id"`
 	UserID        int64     `json:"user_id"`

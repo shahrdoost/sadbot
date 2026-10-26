@@ -148,6 +148,34 @@
 
 ## ساختار مشترک
 
+### قرارداد callback (مهم برای نوشتن تمپلیت)
+
+callback data دکمه‌ها با پیشوند `act:` ساخته میشوند (مثلاً `act:tap`)، اما **موتور قبل از dispatch پیشوند `act:` را میبرد** (`engine.go`: `bc.HandleAction(strings.TrimPrefix(action, "act:"))`). پس `HandleAction` مقدار را *بدون* پیشوند میگیرد. هر ۸ تمپلیت بازی ابتدای `HandleAction` نرمال‌سازی میکنند:
+
+```go
+if !strings.HasPrefix(action, "act:") {
+    action = "act:" + action
+}
+```
+
+بدون این نرمال‌سازی، `switch action { case "act:tap": ... }` هرگز match نمیشد و **تمام دکمه‌های inline مرده بودند** (باگ ۲۰۲۶-۱۰-۲۶ رفع شد — با تست‌های E2E پیدا شد).
+
+### الگوی CTE در UPDATE…RETURNING (مهم)
+
+Postgres در `RETURNING` مقادیر **NEW** را میبیند نه OLD. هر جا مقدار قبل از UPDATE لازم است، باید با CTE مقدار قدیمی capture شود — سه مورد رفع‌شده (۲۰۲۶-۱۰-۲۶):
+
+| متد | باگ بدون CTE |
+|---|---|
+| `BombLandRepo.SellAll` | `RETURNING bombs` بعد از `bombs=0` → همیشه ۰ |
+| `BombLandRepo.CatchUpAuto` | `RETURNING` محاسبه بعد از `last_auto=now()` → همیشه ۰ |
+| `AnonyChatRepo.EndChat` | `RETURNING partner_id` بعد از `partner_id=NULL` → پارتنر هرگز خبردار/آزاد نمیشد |
+
+```sql
+WITH prev AS (SELECT partner_id FROM t WHERE ...)
+UPDATE t SET partner_id=NULL WHERE ...
+RETURNING (SELECT partner_id FROM prev)
+```
+
 ### BotContext (دسترسی تمپلیت)
 
 ```go

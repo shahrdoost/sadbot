@@ -332,9 +332,14 @@ func (r *AnonyChatRepo) MatchUsers(ctx context.Context, botID uuid.UUID, userA, 
 }
 
 func (r *AnonyChatRepo) EndChat(ctx context.Context, botID uuid.UUID, userID int64) (partnerID *int64, err error) {
+	// CTE captures the OLD partner_id — RETURNING would see NULL after the
+	// SET, so the partner would never be notified or released.
 	err = r.db.QueryRow(ctx, `
+		WITH prev AS (
+			SELECT partner_id FROM anonychat_users WHERE bot_id=$1 AND user_id=$2
+		)
 		UPDATE anonychat_users SET status='idle', partner_id=NULL WHERE bot_id=$1 AND user_id=$2
-		RETURNING partner_id`, botID, userID).Scan(&partnerID)
+		RETURNING (SELECT partner_id FROM prev)`, botID, userID).Scan(&partnerID)
 	return
 }
 

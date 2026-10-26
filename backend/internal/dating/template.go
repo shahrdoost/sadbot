@@ -339,17 +339,25 @@ func handleSetup(bc *engine.BotContext, st *Store, text string) bool {
 		return true
 	}
 
+	// Home-menu presses must escape any edit prompt: the home keyboard stays
+	// reachable there (e.g. the name prompt keeps it), and swallowing the label
+	// as field input would — in the name prompt — literally rename the user to
+	// a button label. Onboarding keeps its funnel (incomplete profile, no escape).
+	if isHomeButtonText(text) {
+		_, editing := dataMap(bc)["edit_profile"]
+		if editing || IsProfileComplete(profile) {
+			delete(dataMap(bc), "edit_profile")
+			bc.SaveState()
+			bc.State["scene"] = "home"
+			goHome(bc, "تغییری ثبت نشد.")
+			return true
+		}
+	}
+
 	switch step(bc) {
 	case "editphoto":
 		// the prompt shows the home keyboard; a press must escape, not hang.
 		// coins were already spent; no stamp since nothing changed.
-		if isHomeButtonText(text) {
-			delete(dataMap(bc), "edit_profile")
-			bc.SaveState()
-			bc.State["scene"] = "home"
-			goHome(bc, "عکسی ثبت نشد.")
-			return true
-		}
 		bc.ReplyKBD("فقط عکس بفرست. برای خروج: 🏠 منوی اصلی", [][]string{{"🏠 منوی اصلی"}})
 		return true
 
@@ -407,7 +415,11 @@ func handleSetup(bc *engine.BotContext, st *Store, text string) bool {
 		}
 		bc.State["step"] = "setcity"
 		bc.SaveState()
-		bc.ReplyKBD("استان "+prov+" انتخاب شد.\nتو کدوم شهر هستی؟", cityRows(prov))
+		cityKB := cityRows(prov)
+		if _, editing := dataMap(bc)["edit_profile"]; editing {
+			cityKB = withHomeRow(cityKB)
+		}
+		bc.ReplyKBD("استان "+prov+" انتخاب شد.\nتو کدوم شهر هستی؟", cityKB)
 		return true
 
 	case "setcity":
@@ -423,12 +435,20 @@ func handleSetup(bc *engine.BotContext, st *Store, text string) bool {
 			}
 		}
 		if !valid {
-			bc.ReplyKBD("این شهر در استان "+prov+" پیدا نشد. از دکمه‌ها انتخاب کن.", cityRows(prov))
+			cityKB := cityRows(prov)
+			if _, editing := dataMap(bc)["edit_profile"]; editing {
+				cityKB = withHomeRow(cityKB)
+			}
+			bc.ReplyKBD("این شهر در استان "+prov+" پیدا نشد. از دکمه‌ها انتخاب کن.", cityKB)
 			return true
 		}
 		city := text
 		if _, err := st.Repo().UpdateProfile(ctx, botID, bc.UserID, postgres.ProfileUpdate{City: &city}); err != nil {
-			bc.ReplyKBD("خطا رخ داد. دوباره تلاش کن.", cityRows(prov))
+			cityKB := cityRows(prov)
+			if _, editing := dataMap(bc)["edit_profile"]; editing {
+				cityKB = withHomeRow(cityKB)
+			}
+			bc.ReplyKBD("خطا رخ داد. دوباره تلاش کن.", cityKB)
 			return true
 		}
 		if _, editing := dataMap(bc)["edit_profile"]; editing {
@@ -556,7 +576,18 @@ func handleHome(bc *engine.BotContext, st *Store, text string) bool {
 
 	// advanced-search wizard steps run inside the home scene
 	if strings.HasPrefix(step(bc), "adv_") {
-		return handleAdvSearch(bc, st, text)
+		// The persistent home keyboard stays visible during the wizard, so a
+		// home-menu press must escape it — otherwise the wizard swallows it as
+		// invalid filter input («یکی از گزینه‌ها رو انتخاب کن»).
+		if isHomeButtonText(text) {
+			data := dataMap(bc)
+			delete(data, "adv_mode")
+			delete(data, "int_pick")
+			bc.State["step"] = ""
+			bc.SaveState()
+		} else {
+			return handleAdvSearch(bc, st, text)
+		}
 	}
 
 	switch text {
@@ -974,6 +1005,12 @@ func ageRows() [][]string {
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// withHomeRow appends a home-escape row so edit prompts (whose step keyboards
+// replace the home keyboard) stay escapable.
+func withHomeRow(rows [][]string) [][]string {
+	return append(rows, []string{"🏠 منوی اصلی"})
 }
 
 func provinceRows() [][]string {

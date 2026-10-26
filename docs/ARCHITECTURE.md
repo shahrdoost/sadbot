@@ -69,6 +69,8 @@ type ActionHandler  interface { HandleAction(bc *BotContext, action string) bool
 type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/تنظیمات
 ```
 
+> **قرارداد `HandleAction`**: callback data با پیشوند `act:` ساخته میشود ولی موتور قبل از dispatch آن را میبرد (`strings.TrimPrefix(action, "act:")`) — پس handler مقدار را *بدون* پیشوند میگیرد. تمپلیت‌ها باید نرمال‌سازی کنند (`if !strings.HasPrefix(action, "act:") { action = "act:" + action }`) — بدون آن switch روی `act:*` هرگز match نمیشود. جزئیات: [GAME_TEMPLATES.md](./GAME_TEMPLATES.md).
+
 ## ران‌تایم تلگرام (`internal/runtime`)
 
 `Manager` به‌ازای هر باتِ running یک `botRuntime` با سه goroutine:

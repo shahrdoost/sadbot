@@ -22,7 +22,7 @@ sadbot/
 ├── frontend/    # React + Redux — پنل فارسی RTL
 ├── tgsidecar/   # FastAPI + Telethon — اکانت‌های MTProto و ساخت بات با BotFather
 ├── renderer/    # سرویس رندر کارت (Playwright) — محتوا
-├── deploy/      # اسکریپت‌های دیپلوی سرور
+├── deploy/      # اسکریپت‌های دیپلوی سرور + هارنس E2E (deploy/e2e/)
 └── docs/        # همین مستندات
 ```
 

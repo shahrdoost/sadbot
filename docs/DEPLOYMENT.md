@@ -1,6 +1,6 @@
 # دیپلوی و عملیات
 
-> تاریخ: ۲۰۲۶-۱۰-۲۵ — production واقعی: سرور `212.87.199.140`
+> تاریخ: ۲۰۲۶-۱۰-۲۶ — production واقعی: سرور `212.87.199.140`
 
 ## ۱. دیپلوی production (سرور صدبات)
 
@@ -128,6 +128,24 @@ cd /opt/sadbot && bash deploy/deploy.sh
 - `grep -c` روی صفر خروجی exit=1 میگیرد و زنجیرهٔ `&&` را می‌شکند — برای verify از الگویی استفاده کنید که میدانید هست، یا exit code را جدا چک کنید.
 - اگر SSH با `Permission denied` رد شد ۳۰-۶۰ ثانیه بعد retry کنید — auth زیر فشار اتصالهای پشت‌سرهم موقتاً رد میشود (ssh/rsyncهای سریع متوالی این‌طوری میشوند).
 - تست بات زنده: از اکانت MTProto پنل (`docker exec -i -e PYTHONPATH=/app sadbot-tgsidecar python3 -`) — دکمه‌های reply خودشان متن هستند؛ دکمه‌های inline با درخواست خام `GetBotCallbackAnswerRequest(peer, msg_id, data=b"act:...")` قابل فشردن‌اند (شیء دکمهٔ wrapper متد `click()` ندارد؛ callback data در `btn.type.data`). هنگام تست کارت مرور، آخرین پیام دارای `reply_markup` را بگیرید — کارتهای قدیمی در history با دکمه می‌مانند.
+
+### هارنس E2E (`deploy/e2e/`)
+
+تست‌های End-to-End واقعی با اکانت MTProto پنل (DA / `9d65f63e…`) که **داخل کانتینر `sadbot-tgsidecar`** اجرا میشوند — اسکریپت‌ها از stdin پایپ میشوند:
+
+```bash
+cat deploy/e2e/explore_bots.py | /tmp/sb-ssh root@212.87.199.140 \
+  "docker exec -i -e PYTHONPATH=/app sadbot-tgsidecar python3 -"
+```
+
+| اسکریپت | نقش |
+|---|---|
+| `harness.py` | درایور مشترک `BotDriver`: ارسال متن، جمع‌آوری پاسخ‌ها، فشردن دکمه‌های inline با `GetBotCallbackAnswerRequest` |
+| `explore_bots.py` | کاوشگر عمومی دکمه‌ها — هر دکمه را میفشارد، پاسخ/ویرایش کارت را ثبت میکند؛ کلیدواژه‌های خرید/برداشت/درگاه را skip میکند (`SAFE_SKIP`) |
+| `flow_dating.py` | جریان کامل دیتینگ (send-minimal: یک send در هر بخش، بقیه با callback) |
+| `flow_duel.py` | یک راند کامل سنگ‌کاغذ‌قیچی: بازی → حرکت → نتیجه → تبدیل/برداشت → رتبه‌بندی |
+
+نکات: session اکانت داخل کانتینر قفل است — اسکریپت‌ها اول `cp /data/sessions/<id>.session /tmp/` میکنند (کانتینر هنگام recreate ولوم `/tmp` را پاک میکند). callback data دکمه‌ها `act:*` است اما موتور پیشوند را قبل از `HandleAction` میبرد (باگ رفع‌شدهٔ ۲۰۲۶-۱۰-۲۶ — همهٔ دکمه‌های inline بازی‌ها مرده بودند). `explore_bots.py` پیام‌های خروجی خودمان را نادیده میگیرد و ویرایش کارت‌ها را با diff اسنپ‌شات تشخیص میدهد.
 
 ### runbook
 

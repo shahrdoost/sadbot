@@ -166,6 +166,9 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 		return false
 	}
 
+	if !strings.HasPrefix(action, "act:") {
+		action = "act:" + action
+	}
 	switch {
 	case action == "act:play":
 		t.doPlay(bc, repo, botID, "")

@@ -164,6 +164,9 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 		return false
 	}
 
+	if !strings.HasPrefix(action, "act:") {
+		action = "act:" + action
+	}
 	switch action {
 	case "act:produce":
 		t.doProduce(bc, repo, botID)

@@ -102,6 +102,9 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 		return false
 	}
 	botID, _ := uuid.Parse(bc.BotID)
+	if !strings.HasPrefix(action, "act:") {
+		action = "act:" + action
+	}
 	switch action {
 	case "act:fortune":
 		t.doFortune(bc, repo, botID)

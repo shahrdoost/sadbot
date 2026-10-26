@@ -295,3 +295,151 @@ func TestEditPhotoPromptEscapesHome(t *testing.T) {
 		t.Fatalf("expected re-prompt, got %#v", msg)
 	}
 }
+
+// TestHomeNavFromAdvSearchWizard: the advanced-search wizard runs in the home
+// scene (step=adv_*). Its steps swallow any unrecognized text as invalid filter
+// input, so home-menu labels must escape the wizard instead. Live bug this
+// locks: pressing «📖 راهنما» inside the wizard replied «یکی از گزینه‌ها رو
+// انتخاب کن» and every home button stayed stuck in the wizard.
+func TestHomeNavFromAdvSearchWizard(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	stepOf := func() string {
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		if err != nil || p == nil {
+			return ""
+		}
+		raw, err := e.users.GetState(ctx, e.botID.String(), p.UserID)
+		if err != nil || len(raw) == 0 {
+			return ""
+		}
+		var st map[string]any
+		if json.Unmarshal(raw, &st) != nil {
+			return ""
+		}
+		s, _ := st["step"].(string)
+		return s
+	}
+
+	// open the browse-mode wizard («🔍 جستجوی ویژه») — lands on adv_gender
+	e.feed(t, e.sendA, "🔍 جستجوی ویژه")
+	if got := stepOf(); got != "adv_gender" {
+		t.Fatalf("expected step adv_gender, got %q", got)
+	}
+
+	// every home label must leave the wizard and open its destination
+	cases := []struct {
+		button string
+		marker string
+	}{
+		{"📖 راهنما", "راهنما"},
+		{"💰 سکه", "کیف پول شما"},
+		{"👤 پروفایل من", "حساب شما"},
+		{"🎁 ماموریت‌ها", "ماموریت‌ها"},
+		{"🔗 به یک ناشناس وصلم کن", "جستجوی ناشناس"},
+	}
+	for _, tc := range cases {
+		// re-enter the wizard first
+		e.feed(t, e.sendA, "🔍 جستجوی ویژه")
+		if got := stepOf(); got != "adv_gender" {
+			t.Fatalf("re-enter wizard for %q: step = %q, want adv_gender", tc.button, got)
+		}
+		e.feed(t, e.sendA, tc.button)
+		if got := stepOf(); got != "" {
+			t.Fatalf("button %q must clear the wizard step, got %q", tc.button, got)
+		}
+		msg := e.sendA.lastTo(111)
+		if msg == nil || !strings.Contains(msg.Text, tc.marker) {
+			t.Fatalf("button %q from wizard: want marker %q, got %#v", tc.button, tc.marker, msg)
+		}
+	}
+
+	// «🏠 منوی اصلی» must still exit the wizard (handled in both paths)
+	e.feed(t, e.sendA, "🔍 جستجوی ویژه")
+	e.feed(t, e.sendA, "🏠 منوی اصلی")
+	if got := stepOf(); got != "" {
+		t.Fatalf("home button must clear the wizard step, got %q", got)
+	}
+
+	// wizard input itself must still work after the fix (not routed away)
+	e.feed(t, e.sendA, "🔍 جستجوی پیشرفته")
+	if got := stepOf(); got != "adv_gender" {
+		t.Fatalf("expected timed wizard adv_gender, got %q", got)
+	}
+	e.feed(t, e.sendA, "🚺 دختر")
+	if got := stepOf(); got != "adv_province" {
+		t.Fatalf("wizard step input broken: step = %q, want adv_province", got)
+	}
+}
+
+// TestHomeNavFromEditPrompts: paid-edit prompts run in the setup scene. The
+// name prompt keeps the home keyboard visible and would literally rename the
+// user to a button label; the age/gender/location prompts replace it with a
+// step keyboard that has no way out. Home labels must escape every edit prompt
+// (coins already spent, no cooldown stamp). Live bug this locks: inside
+// «✏️ تغییر سن», every home button was answered «لطفاً یک عدد بین ۱۸ تا ۷۰
+// انتخاب کن» and the user stayed trapped in the prompt.
+func TestHomeNavFromEditPrompts(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	sceneStep := func() (string, string) {
+		p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+		if err != nil || p == nil {
+			return "", ""
+		}
+		raw, err := e.users.GetState(ctx, e.botID.String(), p.UserID)
+		if err != nil || len(raw) == 0 {
+			return "", ""
+		}
+		var st map[string]any
+		if json.Unmarshal(raw, &st) != nil {
+			return "", ""
+		}
+		s, _ := st["scene"].(string)
+		k, _ := st["step"].(string)
+		return s, k
+	}
+
+	// name prompt: a home label must NOT become the new name
+	e.feedCB(t, e.sendA, "act:edit:name")
+	if sc, st := sceneStep(); sc != "setup" || st != "setname" {
+		t.Fatalf("expected setup/setname, got %q/%q", sc, st)
+	}
+	e.feed(t, e.sendA, "📖 راهنما")
+	if sc, _ := sceneStep(); sc != "home" {
+		t.Fatalf("home label in name prompt must escape, scene = %q", sc)
+	}
+	p, err := e.store.ProfileByTelegram(ctx, e.botID, 111)
+	if err != nil {
+		t.Fatalf("profile: %v", err)
+	}
+	if p.Name == nil || *p.Name != "امیر" {
+		t.Fatalf("name must stay unchanged after escaped edit, got %v", p.Name)
+	}
+
+	// age prompt: home label must escape instead of re-prompting for an age
+	e.feedCB(t, e.sendA, "act:edit:age")
+	if sc, st := sceneStep(); sc != "setup" || st != "setage" {
+		t.Fatalf("expected setup/setage, got %q/%q", sc, st)
+	}
+	e.feed(t, e.sendA, "💰 سکه")
+	if sc, _ := sceneStep(); sc != "home" {
+		t.Fatalf("home label in age prompt must escape, scene = %q", sc)
+	}
+	if msg := e.sendA.lastTo(111); msg == nil || strings.Contains(msg.Text, "بین ۱۸ تا ۷۰") {
+		t.Fatalf("age prompt must not swallow home labels, got %#v", msg)
+	}
+
+	// the edit prompt keyboard itself must offer a home escape
+	e.feedCB(t, e.sendA, "act:edit:age")
+	msg := e.sendA.lastTo(111)
+	if msg == nil || !strings.Contains(string(msg.ReplyMark), "منوی اصلی") {
+		t.Fatalf("age edit keyboard must include a home button, got %#v", msg)
+	}
+}

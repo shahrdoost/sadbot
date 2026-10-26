@@ -41,7 +41,13 @@
 
 ### گارد ناوبری مرکزی
 
-کیبورد home در صحنه‌های inline-only (browse) یا صحنه‌های متنی (search/ai/confess/support) میماند؛ در `HandleMessage` یک گارد مرکزی هر لیبل `isHomeButtonText` را در این پنج صحنه به home برمیگرداند (وگرنه داخل confess متن دکمه به‌عنوان متن اعتراف بلعیده میشد — باگ live رفعشده). تست: `nav_matrix_test.go` (`TestHomeNavFromEveryScene`, `TestHomeNavFromInlineOnlyScenes`, `TestHomeMenuColoredButtons`).
+کیبورد home در صحنه‌های inline-only (browse) یا صحنه‌های متنی (search/ai/confess/support) میماند؛ در `HandleMessage` یک گارد مرکزی هر لیبل `isHomeButtonText` را در این پنج صحنه به home برمیگرداند (وگرنه داخل confess متن دکمه به‌عنوان متن اعتراف بلعیده میشد — باگ live رفعشده).
+
+**فرار از promptهای ویرایش و ویزارد جستجو (۲۰۲۶-۱۰-۲۶، رفع باگ‌های live):**
+- **promptهای ویرایش پروفایل** (صحنهٔ setup): لیبل home نباید به‌عنوان ورودی فیلد بلعیده شود — داخل prompt نام، کاربر عملاً به نامِ برچسب دکمه تغییرنام میداد؛ داخل سن/جنسیت/مکان کاربر در prompt گیر میکرد («یک عدد بین ۱۸ تا ۷۰ انتخاب کن»). حالا در `handleSetup` گارد مرکزی هر لیبل home را در حالت edit (یا پروفایل کامل) خارج میکند؛ `withHomeRow` یک ردیف «🏠 منوی اصلی» به کیبورد مراحل ویرایش اضافه میکند تا راه فرار داشته باشند. سکه قبلاً خرج شده، کول‌داون ثبت نمیشود.
+- **ویزارد جستجوی پیشرفته** (`adv_*` در صحنهٔ home): مراحل ویزارد هر متن ناشناس را «ورودی فیلتر نامعتبر» میبلعیدند — لیبل‌های home گیر میافتادند. حالا در `handleHome` لیبل home از ویزارد خارج میشود.
+
+تست: `nav_matrix_test.go` (`TestHomeNavFromEveryScene`, `TestHomeNavFromInlineOnlyScenes`, `TestHomeMenuColoredButtons`, `TestHomeNavFromAdvSearchWizard`, `TestHomeNavFromEditPrompts` — دومی قفل‌کنندهٔ باگ rename-با-لیبل است).
 
 ## ماشین وضعیت
 
@@ -120,10 +126,13 @@ quota رایگان (`ai_free_messages`) بعد هر پیام `ai_message_cost` (
 
 از پنل وب per-bot: تنظیمات عددی (۳۸ فیلد)، ویرایش کانالها، هارنس AI (لیست کاربران mid-AI + toggle)، چت‌ویور و فید پیامها، برادکست (متن + عکس + فوتر)، کدهای تخفیف، اعترافها/تیکتها، اسکن بلاک تلگرامی، ریست/مسدود/سکه/پیام مستقیم per-user.
 
+**فید چت دوطرفه**: هر پیام تایپ‌شده در صحنهٔ chat دو بار لاگ میشود — رویداد inbound فرستنده + آینهٔ outbound برای پارتنر (`RecordOutboundForPartner`) — پس فید جهانی پنل هر دو سمت مکالمه را نشان میدهد؛ `is_outbound` نیمهٔ آینه‌ای را مشخص میکند.
+
 ## تست
 
 - `flow_test.go` — جریان کامل چت (Postgres واقعی + Sender جعلی).
-- `nav_matrix_test.go` — ماتریس ناوبری از هر صحنه + رنگی بودن کیبورد + فرار از prompt عکس.
+- `nav_matrix_test.go` — ماتریس ناوبری از هر صحنه + رنگی بودن کیبورد + فرار از prompt عکس/ویرایش + فرار از ویزارد جستجوی پیشرفته.
+- `chat_surveillance_test.go` — ترنسکریپت + فید دوطرفه (هر پیام = inbound + آینهٔ outbound).
 - `filtered_browse_test.go` — ویزارد browse mode (فیلتر جنسیت/استان/شهر/سن، رایگان بودن، دکهٔ خالی).
 - `browse_test.go` / `phase3_*` / `p4_test.go` — لایک متقابل، سوپرلایک، کانالها، گوست‌ها.
 - `profile_edit_test.go` — صفحه و ۶ ویرایش + کول‌داون.
@@ -146,3 +155,5 @@ await client(functions.messages.GetBotCallbackAnswerRequest(
 ```
 
 نکته: کارت‌های قدیمی در history می‌مانند — هنگام تست حتماً کارت *جدید* را از `iter_messages` بگیرید ( آخرین پیامِ دارای `reply_markup` ) وگرنه کارت کهنهٔ ویرایش‌نشده را می‌بینید.
+
+**هارنس E2E آماده** (`deploy/e2e/`): اسکریپت‌های پایتونی که داخل کانتینر `sadbot-tgsidecar` با `python3 -` پایپ میشوند — `explore_bots.py` (کاوشگر دکمه‌ها: هر دکمه را میفشارد و پاسخ را جمع میکند، خرید/برداشت را skip میکند)، `flow_dating.py` (جریان کامل دیتینگ)، `flow_duel.py` (یک راند کامل duel)، `harness.py` (درایور مشترک BotDriver). جزئیات اجرا در [DEPLOYMENT.md](./DEPLOYMENT.md).

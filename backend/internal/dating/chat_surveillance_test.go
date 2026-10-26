@@ -88,12 +88,14 @@ func TestChatSurveillance(t *testing.T) {
 	}
 
 	// --- global recent feed ---
+	// both directions are logged: each typed message = the sender's inbound
+	// event + the partner's outbound mirror (the panel feed shows both).
 	feed, err := e.store.Repo().RecentChatMessages(ctx, e.botID, 50)
 	if err != nil {
 		t.Fatalf("RecentChatMessages: %v", err)
 	}
-	if len(feed) != 3 {
-		t.Fatalf("global feed must hold all chat-scene messages, got %d", len(feed))
+	if len(feed) != 6 {
+		t.Fatalf("global feed must hold both directions of the 3 chat messages, got %d", len(feed))
 	}
 	// newest first: the last thing said was the menu tap, the first was A's line
 	if !contains(feed[0].Text, "منوی اصلی") {
