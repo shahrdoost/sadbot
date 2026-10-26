@@ -2,6 +2,7 @@ package dating
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"sadbot/internal/domain"
 	"sadbot/internal/engine"
+	"sadbot/internal/llm"
 	"sadbot/internal/repository/postgres"
 
 	"github.com/google/uuid"
@@ -240,7 +242,166 @@ func partnerIsGhost(ctx context.Context, st *Store, botID uuid.UUID, partnerUser
 	return p.IsGhost
 }
 
-// ghostHandleMessage replies with a scripted persona instead of forwarding,
+// ghostSystemPrompt builds the persona prompt that keeps the fake partner
+// indistinguishable from a real user of the dating bot.
+func ghostSystemPrompt(p *domain.DatingProfile) string {
+	name := "یکی از کاربرا"
+	if p.Name != nil && *p.Name != "" {
+		name = *p.Name
+	}
+	age := 25
+	if p.Age != nil {
+		age = *p.Age
+	}
+	city := "تهران"
+	if p.City != nil && *p.City != "" {
+		city = *p.City
+	} else if p.Province != nil && *p.Province != "" {
+		city = *p.Province
+	}
+	gender := "پسر"
+	if p.Gender != nil && *p.Gender == "female" {
+		gender = "دختر"
+	}
+	interests := ""
+	if len(p.Interests) > 0 {
+		interests = "\n- سرگرمی‌ها: " + strings.Join(p.Interests, "، ")
+	}
+	return fmt.Sprintf(`تو داری توی یه اپ چت دوستیابی با یه نفر چت می‌کنی. تو یه کاربر کاملاً واقعی هستی.
+
+هویت تو (ثابت نگهش دار):
+- اسم: %s
+- سن: %d
+- شهر: %s
+- جنسیت: %s%s
+
+قوانین مطلق:
+۱. هرگز نگو هوش مصنوعی، ربات، مدل زبانی یا برنامه‌ای. اگر پرسید «رباتی؟» طبیعی و با شوخی انکار کن (مثلاً: «نه بابا 😄 چرا همچین فکری کردی؟»).
+۲. هیچ جملهٔ رسمی، اداری، آموزشی یا دستیاری نگو («چطور می‌تونم کمک کنم»، «در خدمتم» و این‌ها ممنوع).
+۳. فقط فارسی محاوره‌ای بنویس، دقیقاً مثل چت تلگرام یه آدم معمولی: کوتاه، خودمانی، گاهی یه ایموجی، با کلمات محاوره‌ای.
+۴. جواب‌ها کوتاه باشد: معمولاً یک تا دو جمله. هرگز پیام بلند، پاراگراف یا فهرست ننویس.
+۵. مثل آدم واقعی رفتار کن: گاهی سوال برمی‌گردونی، گاهی حوصله‌ات کمه، گاهی «نمیدونم» می‌گی، گاهی سرت شلوغه. جواب‌های بی‌نقص و آماده نده.
+۶. اطلاعات هویتت (اسم، سن، شهر) با پروفایلت هماهنگ بماند؛ اگر اسمت را پرسید همان %s را بگو.
+۷. دربارهٔ مسائل جنسی وارد نشو؛ موضوع را طبیعی عوض کن.
+۸. لحن گرم ولی معمولی؛ نه بیش از حد هیجان‌زده، نه رسمی.
+
+نمونهٔ سبک (از سبکش پیروی کن، کپی نکن):
+کاربر: سلام خوبی؟
+تو: سلام 😊 آره ممنون، تو چطوری؟
+کاربر: چیکار می‌کنی؟
+تو: همین داشتم گوشیمو بالا پایین می‌کردم 😅 تو چه خبر؟`, name, age, city, gender, interests, name)
+}
+
+// ghostBreakMarkers are phrases that would reveal the partner is not human.
+// A reply containing any is discarded and replaced with the scripted fallback.
+var ghostBreakMarkers = []string{
+	"هوش مصنوعی", "رباتم", "من ربات", "باتم", "من بات",
+	"دستیار هوشمند", "دستیارم", "مدل زبانی", "chatgpt", "gpt",
+	"من یه برنامه", "برنامه‌ام", "انسان نیستم", "آدم واقعی نیستم",
+}
+
+func ghostBreaksCharacter(reply string) bool {
+	lower := strings.ToLower(reply)
+	for _, m := range ghostBreakMarkers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitBubbles breaks a reply into short chat bubbles (1-2) the way people
+// actually type — never one dense paragraph. Rune-safe for Persian text.
+func splitBubbles(reply string) []string {
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
+		return nil
+	}
+	r := []rune(reply)
+	if len(r) < 60 {
+		return []string{reply}
+	}
+	cut := -1
+	for i := len(r) - 15; i > 20; i-- {
+		switch r[i] {
+		case '؟', '!', '.', '\n':
+			cut = i
+		}
+		if cut >= 0 {
+			break
+		}
+	}
+	if cut < 0 {
+		return []string{reply}
+	}
+	a := strings.TrimSpace(string(r[:cut+1]))
+	b := strings.TrimSpace(string(r[cut+1:]))
+	if a == "" || b == "" {
+		return []string{reply}
+	}
+	return []string{a, b}
+}
+
+// chatActioner is an optional Sender capability: typing indicator.
+type chatActioner interface {
+	SendChatAction(ctx context.Context, chatID int64, action string) error
+}
+
+// ghostComposeReply produces the partner's reply (LLM persona with history,
+// falling back to scripted lines) and persists the bounded chat history.
+func ghostComposeReply(bc *engine.BotContext, st *Store, botID uuid.UUID, partnerUserID int64, text string) string {
+	data := dataMap(bc)
+	histRaw, _ := data["ghost_hist"].([]any)
+	var history []llm.Message
+	for _, item := range histRaw {
+		if m, ok := item.(map[string]any); ok {
+			role, _ := m["role"].(string)
+			content, _ := m["content"].(string)
+			if role != "" && content != "" {
+				history = append(history, llm.Message{Role: role, Content: content})
+			}
+		}
+	}
+	history = append(history, llm.Message{Role: "user", Content: text})
+
+	reply := ""
+	if client := llmOf(bc); client.Enabled() {
+		p, err := st.Profile(engineBG(), botID, partnerUserID)
+		if err != nil || p == nil {
+			p = &domain.DatingProfile{}
+		}
+		maxHist := bc.PriceInt("ai_max_history", 12)
+		sent := history
+		if len(sent) > maxHist {
+			sent = sent[len(sent)-maxHist:]
+		}
+		out, err := client.Chat(engineBG(), ghostSystemPrompt(p), sent)
+		if err != nil {
+			log.Printf("[dating] ghost llm: %v", err)
+		} else if ghostBreaksCharacter(out) {
+			log.Printf("[dating] ghost reply broke character, using fallback")
+		} else {
+			reply = strings.TrimSpace(out)
+		}
+	}
+	if reply == "" {
+		reply = ghostReplyTo(text)
+	}
+
+	history = append(history, llm.Message{Role: "assistant", Content: reply})
+	if len(history) > 20 {
+		history = history[len(history)-20:]
+	}
+	out := make([]any, 0, len(history))
+	for _, m := range history {
+		out = append(out, map[string]any{"role": m.Role, "content": m.Content})
+	}
+	data["ghost_hist"] = out
+	bc.SaveState()
+	return reply
+}
+
+// ghostHandleMessage replies with a persona instead of forwarding,
 // ending the chat after the configured message budget (no rating).
 func ghostHandleMessage(bc *engine.BotContext, st *Store, botID uuid.UUID, partnerUserID int64, text string) bool {
 	ctx := engineBG()
@@ -258,11 +419,23 @@ func ghostHandleMessage(bc *engine.BotContext, st *Store, botID uuid.UUID, partn
 	case int:
 		n = v
 	}
+	// randomize the farewell point once so chats don't all die at the same count
+	threshold := maxMsg
+	if v, ok := data["ghost_max_n"].(float64); ok {
+		threshold = int(v)
+	} else {
+		jit := priceInt(prices, "ghost_farewell_jitter", 3)
+		if jit < 0 {
+			jit = 0
+		}
+		threshold = maxMsg + rand.Intn(jit+1)
+		data["ghost_max_n"] = threshold
+	}
 	n++
 	data["ghost_n"] = n
 	bc.SaveState()
 
-	if n >= maxMsg {
+	if n >= threshold {
 		_ = st.EndChatNoRating(ctx, botID, bc.UserID, partnerUserID)
 		bc.ReplyKBD(ghostFarewell, chatRows)
 		delay := time.Duration(priceInt(prices, "ghost_reply_delay_ms", 1500)) * time.Millisecond
@@ -273,18 +446,48 @@ func ghostHandleMessage(bc *engine.BotContext, st *Store, botID uuid.UUID, partn
 		return true
 	}
 
-	reply := ghostReplyTo(text)
+	reply := ghostComposeReply(bc, st, botID, partnerUserID, text)
+
+	// human-layer: think-time proportional to reply length, then bubbles
 	base := priceInt(prices, "ghost_reply_delay_ms", 1500)
 	jitter := priceInt(prices, "ghost_reply_jitter_ms", 5000)
 	if jitter < 0 {
 		jitter = 0
 	}
-	delay := time.Duration(base+rand.Intn(jitter+1)) * time.Millisecond
+	typing := len([]rune(reply)) * 35
+	if typing > 4500 {
+		typing = 4500
+	}
+	delay := time.Duration(base+rand.Intn(jitter+1)+typing) * time.Millisecond
+	bubbles := splitBubbles(reply)
 	chatID := bc.ChatID
 	sender := bc.Sender
 	go func() {
+		stopTyping := make(chan struct{})
+		defer close(stopTyping)
+		if ca, ok := sender.(chatActioner); ok {
+			go func() {
+				for {
+					_ = ca.SendChatAction(context.Background(), chatID, "typing")
+					select {
+					case <-stopTyping:
+						return
+					case <-time.After(4 * time.Second):
+					}
+				}
+			}()
+		}
 		time.Sleep(delay)
-		_, _ = sender.Send(context.Background(), chatID, reply, mustKBD(chatRows), 0)
+		for i, b := range bubbles {
+			if i > 0 {
+				time.Sleep(time.Duration(700+rand.Intn(1600)) * time.Millisecond)
+			}
+			kbd := mustKBD(chatRows)
+			if i < len(bubbles)-1 {
+				kbd = nil
+			}
+			_, _ = sender.Send(context.Background(), chatID, b, kbd, 0)
+		}
 	}()
 	return true
 }

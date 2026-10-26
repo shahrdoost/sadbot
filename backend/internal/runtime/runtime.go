@@ -179,6 +179,12 @@ func (s *TelegramSender) ForwardMedia(ctx context.Context, fromChatID, toChatID,
 	return s.client.ForwardMedia(ctx, fromChatID, toChatID, messageID)
 }
 
+// SendChatAction shows a typing/chat-action indicator (best-effort; the Kat
+// subset lacks the method and simply errors).
+func (s *TelegramSender) SendChatAction(ctx context.Context, chatID int64, action string) error {
+	return s.client.SendChatAction(ctx, chatID, action)
+}
+
 func (s *TelegramSender) AnswerCallback(ctx context.Context, callbackID, text string) error {
 	return s.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackPayload{
 		CallbackQueryID: callbackID, Text: text,
@@ -410,8 +416,14 @@ func (m *Manager) pollLoop(ctx context.Context, rt *botRuntime) {
 		}
 		// generous budget: a slow or stalled long-poll must outwait the
 		// endpoint's own hold, or the abandoned poll 409s every retry
+		pollTimeout := 30
+		if rt.platform == domain.PlatformKat {
+			// cr0.ir's poll wake lags behind new messages; keep the hold
+			// short so a reply never waits out a full long-poll cycle
+			pollTimeout = 2
+		}
 		pollCtx, cancel := context.WithTimeout(ctx, 65*time.Second)
-		updates, err := rt.client.GetUpdates(pollCtx, offset, 30)
+		updates, err := rt.client.GetUpdates(pollCtx, offset, pollTimeout)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {

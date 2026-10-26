@@ -23,6 +23,7 @@ func TestGhostChatFlow(t *testing.T) {
 		"ghost_delay_seconds":   float64(0),
 		"ghost_pool_size":       float64(2),
 		"ghost_max_messages":    float64(3),
+		"ghost_farewell_jitter": float64(0),
 		"ghost_reply_delay_ms":  float64(1),
 		"ghost_reply_jitter_ms": float64(1),
 	}
