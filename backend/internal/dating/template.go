@@ -79,7 +79,7 @@ func (t *Template) DefaultPrices() []byte {
 		"ai_free_messages": 20,
 		"ai_message_cost": 1,
 		"ai_max_history": 12,
-		"ghost_enabled": 1,
+		"ghost_enabled": 0,
 		"ghost_pool_size": 5,
 		"ghost_max_messages": 12,
 		"ghost_delay_seconds": 15,

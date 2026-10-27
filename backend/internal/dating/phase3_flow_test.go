@@ -20,6 +20,7 @@ func TestGhostChatFlow(t *testing.T) {
 	ctx := context.Background()
 	e.prices = map[string]any{
 		"ghost_force":           float64(1),
+		"ghost_enabled":         float64(1),
 		"ghost_delay_seconds":   float64(0),
 		"ghost_pool_size":       float64(2),
 		"ghost_max_messages":    float64(3),
@@ -157,5 +158,33 @@ func TestSupportTicketFlow(t *testing.T) {
 	answered, _, _ := e.mod.ListTickets(ctx, e.botID, domain.TicketAnswered, 1, 20)
 	if len(answered) != 1 {
 		t.Fatalf("ticket must move to answered: %+v", answered)
+	}
+}
+
+// TestGhostInjectDisabledByDefault: pressing «چت با غریبه» with nobody online
+// must NOT pair the searcher with an AI persona unless ghost_enabled is set.
+func TestGhostInjectDisabledByDefault(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+	e.prices = map[string]any{
+		"ghost_force":         float64(1),
+		"ghost_delay_seconds": float64(0),
+		"ghost_pool_size":     float64(2),
+	}
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.feed(t, e.sendA, "🔗 به یک ناشناس وصلم کن")
+	e.feed(t, e.sendA, "🔗 غریبه")
+
+	m := NewMatcher(e.store, staticBots{e.botID}, func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
+		return nil
+	})
+	m.SetPricesFunc(func(uuid.UUID) map[string]any { return e.prices })
+	m.injectGhosts(ctx, e.botID)
+
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	if pA.PartnerUserID != nil || pA.Status == domain.DatingChatting {
+		t.Fatalf("searcher must stay unpaired without ghost_enabled: %+v", pA)
 	}
 }

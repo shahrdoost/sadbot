@@ -287,3 +287,28 @@ func TestText_MissingKeyReturnsKey(t *testing.T) {
 		t.Fatalf("Text(missing) = %q", bc.Text("missing"))
 	}
 }
+
+func TestHandleUpdate_LabelCallbackRoutesLikeText(t *testing.T) {
+	eng, sender, _, _, bot := newEngineFixture(t)
+
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, msgUpdate("/start"))
+	// Kat converts reply keyboards to inline buttons whose callback_data is
+	// the label — pressing it must route exactly like typing the label.
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("📖 درباره ما"))
+
+	if len(sender.callbacks) != 1 {
+		t.Fatal("callback not answered")
+	}
+	if len(sender.sent) != 2 || !strings.Contains(sender.sent[1].Text, "نمونه") {
+		t.Fatalf("label callback must render the about scene: %+v", sender.sent)
+	}
+}
+
+func TestHandleUpdate_UnknownLabelCallbackRepliesUnknown(t *testing.T) {
+	eng, sender, _, _, bot := newEngineFixture(t)
+
+	eng.HandleUpdate(context.Background(), "telegram", bot, sender, cbUpdate("دکمهٔ ناشناخته"))
+	if len(sender.sent) != 1 || !strings.Contains(sender.sent[0].Text, "متوجه نشدم") {
+		t.Fatalf("unknown label callback = %+v", sender.sent)
+	}
+}

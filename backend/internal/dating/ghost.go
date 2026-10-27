@@ -113,7 +113,7 @@ func priceInt(prices map[string]any, key string, def int) int {
 // free ghost personas. Intensity adapts to the active real-user count.
 func (m *Matcher) injectGhosts(ctx context.Context, botID uuid.UUID) {
 	prices := m.prices(botID)
-	if priceInt(prices, "ghost_enabled", 1) == 0 {
+	if priceInt(prices, "ghost_enabled", 0) == 0 {
 		return
 	}
 	if priceInt(prices, "ghost_force", 0) == 0 {

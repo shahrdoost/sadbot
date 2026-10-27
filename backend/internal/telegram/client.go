@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,9 @@ type Client struct {
 	token string
 	base  string
 	http  *http.Client
+	// kat marks the cr0.ir endpoint: its Bot API subset silently drops
+	// reply keyboards, so those are converted to inline keyboards.
+	kat bool
 }
 
 // Bot API endpoint prefixes. Kat (cr0.ir) is a Telegram fork speaking the same
@@ -56,13 +60,95 @@ func NewClientWithBase(base, token string) *Client {
 		token: token,
 		base:  base + token + "/",
 		http:  &http.Client{Timeout: 60 * time.Second},
+		kat:   strings.HasPrefix(base, BaseKat),
 	}
+}
+
+// inlineizeMarkup converts a reply keyboard into an inline keyboard whose
+// callback_data is the button label (the engine routes label callbacks like
+// typed text). Inline keyboards pass through untouched; remove_keyboard drops.
+func inlineizeMarkup(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	kbdRaw, ok := m["keyboard"]
+	if !ok {
+		if _, rm := m["remove_keyboard"]; rm {
+			return nil
+		}
+		return raw
+	}
+	type kbtn struct {
+		Text string `json:"text"`
+	}
+	var rows [][]kbtn
+	if err := json.Unmarshal(kbdRaw, &rows); err != nil {
+		var srows [][]string
+		if err := json.Unmarshal(kbdRaw, &srows); err != nil {
+			return raw
+		}
+		for _, r := range srows {
+			var kr []kbtn
+			for _, t := range r {
+				kr = append(kr, kbtn{Text: t})
+			}
+			rows = append(rows, kr)
+		}
+	}
+	type ibtn struct {
+		Text         string `json:"text"`
+		CallbackData string `json:"callback_data"`
+	}
+	out := make([][]ibtn, 0, len(rows))
+	for _, r := range rows {
+		var ir []ibtn
+		for _, b := range r {
+			if b.Text == "" {
+				continue
+			}
+			ir = append(ir, ibtn{Text: b.Text, CallbackData: b.Text})
+		}
+		if len(ir) > 0 {
+			out = append(out, ir)
+		}
+	}
+	conv, err := json.Marshal(map[string]any{"inline_keyboard": out})
+	if err != nil {
+		return raw
+	}
+	return conv
+}
+
+// katFixPayload rewrites reply keyboards for the Kat endpoint.
+func katFixPayload(payload any) any {
+	switch p := payload.(type) {
+	case SendMessagePayload:
+		p.ReplyMarkup = inlineizeMarkup(p.ReplyMarkup)
+		return p
+	case SendPhotoPayload:
+		p.ReplyMarkup = inlineizeMarkup(p.ReplyMarkup)
+		return p
+	case EditMessageTextPayload:
+		p.ReplyMarkup = inlineizeMarkup(p.ReplyMarkup)
+		return p
+	case EditMessageCaptionPayload:
+		p.ReplyMarkup = inlineizeMarkup(p.ReplyMarkup)
+		return p
+	}
+	return payload
 }
 
 func (c *Client) do(ctx context.Context, method string, payload any, out any) error {
 	var body []byte
 	var err error
 	if payload != nil {
+		if c.kat {
+			payload = katFixPayload(payload)
+		}
 		body, err = json.Marshal(payload)
 		if err != nil {
 			return err

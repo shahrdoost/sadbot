@@ -223,7 +223,21 @@ func (e *Engine) HandleUpdate(ctx context.Context, platform string, bot *domain.
 		bc.OnStart(payload)
 	case upd.CallbackQuery != nil:
 		_ = sender.AnswerCallback(ctx, upd.CallbackQuery.ID, "")
-		bc.DispatchAction(upd.CallbackQuery.Data)
+		data := upd.CallbackQuery.Data
+		if strings.HasPrefix(data, "act:") || strings.HasPrefix(data, "scene:") || strings.HasPrefix(data, "url:") {
+			bc.DispatchAction(data)
+			break
+		}
+		// label callback: Kat converts reply keyboards to inline buttons whose
+		// callback_data is the label — route exactly like a typed label
+		if mh, ok := tpl.(MessageHandler); ok && mh.HandleMessage(bc, data) {
+			break
+		}
+		if action, found := bc.LookupLabel(data); found {
+			bc.DispatchAction(action)
+		} else {
+			bc.Reply(bc.Text("unknown"))
+		}
 	case upd.Message != nil && upd.Message.Text != "":
 		if mh, ok := tpl.(MessageHandler); ok && mh.HandleMessage(bc, upd.Message.Text) {
 			return
