@@ -469,3 +469,51 @@ def test_send_photo_rejects_bad_b64(client):
     )
     assert r.status_code == 400
     assert r.json()["detail"] == "INVALID_B64"
+
+
+# ---- proxy block → tappable link (_proxy_links / _copyable) ----
+
+
+def test_proxy_block_becomes_tappable_link():
+    from app.telegram_api import _copyable
+
+    text = (
+        "⚡ پروکسی MTProto جدید\n\n"
+        "🖥 سرور: 91.107.171.35\n"
+        "🔌 پورت: 443\n"
+        "🔑 سکرت: 3XnnAQIAAQAH8AMDhuJMOt0\n\n"
+        "برای اتصال، این سکرت را در تنظیمات پروکسی تلگرام وارد کنید.\n\n"
+        "برای دریافت کانفیگ‌های بیشتر فالو کنید: @mr_vpn_here"
+    )
+    body, ents = _copyable(text)
+    assert "91.107.171.35" not in body, "server field must not survive as plain text"
+    assert "وارد کنید" not in body, "manual-instruction line must be dropped"
+    assert "@mr_vpn_here" in body
+    urls = [e.url for e in ents if getattr(e, "url", None)]
+    assert urls == ["https://t.me/proxy?server=91.107.171.35&port=443&secret=3XnnAQIAAQAH8AMDhuJMOt0"]
+
+
+def test_proxy_block_plain_labels():
+    from app.telegram_api import _copyable
+
+    body, ents = _copyable("Server: 1.2.3.4\nPort: 8443\nSecret: EERighJJvXrFGRMCIMjdCQ")
+    assert "1.2.3.4" not in body
+    urls = [e.url for e in ents if getattr(e, "url", None)]
+    assert urls == ["https://t.me/proxy?server=1.2.3.4&port=8443&secret=EERighJJvXrFGRMCIMjdCQ"]
+
+
+def test_proxy_unusable_host_gets_generic_link():
+    from app.telegram_api import _copyable
+
+    body, ents = _copyable("Server: Unknown\nPort: 8443\nSecret: EERighJJvXrFGRMCIMjdCQ")
+    urls = [e.url for e in ents if getattr(e, "url", None)]
+    assert urls == ["https://t.me/proxy"], "placeholder host must not build a dead link"
+
+
+def test_config_uri_untouched():
+    from app.telegram_api import _copyable
+
+    uri = "vless://uuid-1@dl.example.com:443?security=tls#tag"
+    body, ents = _copyable("کانفیگ:\n" + uri)
+    assert uri in body
+    assert not [e for e in ents if getattr(e, "url", None)], "no proxy link for config posts"

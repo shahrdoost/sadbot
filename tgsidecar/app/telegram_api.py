@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from telethon import errors
-from telethon.tl.types import MessageEntityPre
+from telethon.tl.types import MessageEntityPre, MessageEntityTextUrl
 
 from . import store
 from .schemas import (
@@ -47,6 +47,87 @@ def _utf16_len(s: str) -> int:
     return len(s.encode("utf-16-le")) // 2
 
 
+# MTProto proxy blocks ("Server: x / Port: 1 / Secret: abc") → one tappable
+# tg://proxy link. Telegram clients open the connect dialog straight from it,
+# while pasted Server/Port/Secret text needs manual entry.
+# ^\W* tolerates emoji/bullet prefixes ("🖥 سرور: …").
+_PROXY_HOST_RE = re.compile(r"^\W*(?:server|host|سرور|هاست)\s*[:：]\s*(\S+)\s*$", re.I)
+_PROXY_PORT_RE = re.compile(r"^\W*(?:port|پورت)\s*[:：]\s*(\d{1,5})\s*$", re.I)
+_PROXY_SECRET_RE = re.compile(r"^\W*(?:secret|سکرت|رمز)\s*[:：]\s*([0-9A-Za-z+/_=-]{8,})\s*$", re.I)
+# line telling the user to paste the secret by hand — obsolete once we link it
+_PROXY_INSTR_RE = re.compile(r"در تنظیمات پروکسی تلگرام وارد کنید", re.I)
+def has_config_uri(text: str) -> bool:
+    return bool(_CONFIG_URI_RE.search(text))
+
+
+_PROXY_LABEL = "🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن"
+_PROXY_FALLBACK = "🔒 اتصال به پروکسی"
+
+
+def _proxy_links(text: str) -> str:
+    """Rewrite every Server/Port/Secret block into a tg://proxy markdown link.
+
+    Runs before _copyable so the block's fields never survive as plain text to
+    be copied by hand. Existing tg://proxy links are left alone.
+    """
+    if not text or "tg://proxy" in text.lower():
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    used = False
+    vague = False
+    i = 0
+    while i < len(lines):
+        server = _PROXY_HOST_RE.match(lines[i])
+        if not server:
+            out.append(lines[i])
+            i += 1
+            continue
+        j, port, secret = i + 1, None, None
+        # fields may be separated by blank lines or an emoji bullet
+        while j < len(lines) and j <= i + 6:
+            ln = lines[j].split("•")[-1]
+            m_port = _PROXY_PORT_RE.match(ln)
+            m_sec = _PROXY_SECRET_RE.match(ln)
+            if m_port and not port:
+                port = m_port.group(1)
+            elif m_sec and not secret:
+                secret = m_sec.group(1)
+            elif lines[j].strip() == "":
+                pass
+            else:
+                break
+            j += 1
+            if port and secret:
+                break
+        host = server.group(1)
+        if port and secret and _hostish(host):
+            out.append(f"[{_PROXY_LABEL}](https://t.me/proxy?server={host}&port={port}&secret={secret})")
+            used = True
+            i = j
+            continue
+        vague = True
+        out.append(lines[i])
+        i += 1
+    plain = "\n".join(out)
+    if used:
+        out = [ln for ln in out if not _PROXY_INSTR_RE.search(ln)]
+    elif vague and not has_config_uri(plain):
+        out.append(f"\n[{_PROXY_FALLBACK}](https://t.me/proxy)")
+    return "\n".join(out)
+
+
+def _hostish(host: str) -> bool:
+    """Reject obvious placeholders ("Unknown", "ناشناخته") that can't connect."""
+    return (
+        re.fullmatch(r"[A-Za-z0-9._-]+", host) is not None
+        and host.strip("._-").lower() not in {"unknown", "ناشناخته", "n/a", "na", "none"}
+    )
+
+
+_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://t\.me/proxy[^)\s]*)\)")
+
+
 def _copyable(text: str):
     """Strip stray markdown fences and mark each config URI as a Pre block.
 
@@ -57,8 +138,18 @@ def _copyable(text: str):
     """
     if not text:
         return text, None
+    text = _proxy_links(text)
     cleaned = text.replace("```", "").replace("`", "")
     entities = []
+    for m in _MD_LINK_RE.finditer(cleaned):
+        entities.append(
+            MessageEntityTextUrl(
+                offset=_utf16_len(cleaned[: m.start()]),
+                length=_utf16_len(m.group(1)),
+                url=m.group(2),
+            )
+        )
+    cleaned = _MD_LINK_RE.sub(lambda m: m.group(1), cleaned)
     for m in _CONFIG_URI_RE.finditer(cleaned):
         uri = m.group(0).rstrip(_URI_TRAIL)
         if not uri:
@@ -66,6 +157,7 @@ def _copyable(text: str):
         entities.append(
             MessageEntityPre(offset=_utf16_len(cleaned[: m.start()]), length=_utf16_len(uri), language="")
         )
+    entities.sort(key=lambda e: e.offset)
     return cleaned, entities or None
 
 
