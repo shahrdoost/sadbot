@@ -1,6 +1,6 @@
 # معماری صدبات
 
-> تاریخ: ۲۰۲۶-۱۰-۲۵ — مطابق کد پیاده‌سازی‌شده در این مخزن
+> تاریخ: ۲۰۲۶-۱۰-۲۹ — مطابق کد پیاده‌سازی‌شده در این مخزن
 
 صدبات یک پردازهٔ Go واحد است که چند بات تلگرامی را همزمان اجرا می‌کند، داده‌های همه را در یک Postgres نگه می‌دارد و یک REST API برای پنل مدیریت ارائه می‌دهد.
 
@@ -71,15 +71,17 @@ type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/ت�
 
 > **قرارداد `HandleAction`**: callback data با پیشوند `act:` ساخته میشود ولی موتور قبل از dispatch آن را میبرد (`strings.TrimPrefix(action, "act:")`) — پس handler مقدار را *بدون* پیشوند میگیرد. تمپلیت‌ها باید نرمال‌سازی کنند (`if !strings.HasPrefix(action, "act:") { action = "act:" + action }`) — بدون آن switch روی `act:*` هرگز match نمیشود. جزئیات: [GAME_TEMPLATES.md](./GAME_TEMPLATES.md).
 
-## ران‌تایم تلگرام (`internal/runtime`)
+## ران‌تایم (`internal/runtime`)
 
-`Manager` به‌ازای هر باتِ running یک `botRuntime` با سه goroutine:
+`Manager` به‌ازای هر باتِ running یک `botRuntime` **در هر پلتفرم** با سه goroutine میسازد (migration 0013):
 
 | goroutine | وظیفه |
 |---|---|
-| **poller** | `getUpdates` با offset و long-poll ۳۰ ثانیه‌ای |
+| **poller** | `getUpdates` با offset و long-poll ۳۰ ثانیه‌ای (کت: short-poll ۲ ثانیه‌ای — بیدارشدن poll در cr0.ir کند است) |
 | **worker** | پردازش ترتیبی آپدیت‌ها → `engine.HandleUpdate` |
 | **outloop** | صف خروجی با rate limit ۲۰ msg/s؛ retry با `retry_after` |
+
+**دو پلتفرم، دادهٔ مشترک**: هر بات میتواند قلوهٔ کت (`kat_token`) هم داشته باشد — دو runtime مستقل (تلگرام + کت) روی همان data کار میکنند و `engine.Router` ارسال/فوروارد بین‌پلتفرمی را به کلاینت درست مسیر میدهد. هویت کاربر `(bot_id, platform, telegram_id)` است. رسانه در کت (بدون `forwardMessage`) graceful degrade میشود. کت reply keyboard ندارد (خاموش میشود) — کلاینت آنها را به inline تبدیل میکند و موتور callback های label را مثل متن تایپ‌شده route میکند.
 
 ## موتور config-driven (`internal/engine`)
 
@@ -92,7 +94,7 @@ type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/ت�
 3. Decode state از JSONB
 4. Merge تنظیمات
 5. لاگ رویداد
-6. روت: `/start` → Starter | callback → ActionHandler | متن → MessageHandler → دکمه‌ها → unknown
+6. روت: `/start` → Starter | callback → ActionHandler (داده با پیشوند `act:`/`scene:`/`url:`) یا label callback (مثل متن تایپ‌شده) | متن → MessageHandler → دکمه‌ها → unknown
 
 ### BotContext
 
@@ -121,7 +123,7 @@ type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/ت�
 - حلقهٔ سراسری هر **۵ ثانیه**
 - جفت‌گیری حریصانه با `similarityScore`
 - **timeout**: جستجوهای >۴۰ ثانیه (یا `timeout_sec` پیشرفته)
-- **گوست‌ها**: کاربران `is_ghost` با موتور پاسخ
+- **گوست‌ها**: کاربران `is_ghost` با موتور پاسخ (پرسونای LLM از پروفایل خودشان؛ fallback اسکریپتی) — **پیش‌فرض `ghost_enabled=0`**؛ فقط با فعال‌سازی per-bot در prices
 
 ## کلکتور محتوا (`internal/content`)
 
@@ -161,6 +163,7 @@ FastAPI + Telethon:
 - لیست چت/پیام/عکس، ارسال پیام
 - **گفتگوی خودکار BotFather** برای ساخت بات
 - جلسات در ولوم `tg_sessions`
+- **فرمت‌بندی ارسال** (`_copyable`): URIهای کانفیگ (`vless://` و…) → بلاک Pre (قابل کپی با یک لمس)؛ **بلوک‌های پروکسی MTProto** (Server/Port/Secret — با برچسب فارسی/انگلیسی و ایموجی) → یک لینک قابل‌کلیک `t.me/proxy` («اتصال مستقیم به پروکسی»)؛ خط «در تنظیمات پروکسی وارد کنید» حذف میشود؛ مقدار سرور غیرواقعی (مثل `Unknown`) → لینک عمومی پروکسی
 
 ## فایل‌های کلیدی
 

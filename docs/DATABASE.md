@@ -1,6 +1,6 @@
 # اسکیمای دیتابیس
 
-> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0012_more_bots`
+> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0013_kat_platform`
 > قواعد کلی:
 > - پول: `BIGINT` (هرگز float)؛ نمایش تومان در UI (÷۱۰).
 > - هر سطر bot-scoped دارای `bot_id UUID` با FK به `bots` (`ON DELETE CASCADE`).
@@ -61,6 +61,7 @@ audit_logs
 | name | نام نمایشی |
 | telegram_username | مثل `@mybot` |
 | token_encrypted | bytea — AES-GCM |
+| kat_token_encrypted / kat_username | توکن و نام کاربری قلوهٔ کت (cr0.ir) — اختیاری؛ خالی = فقط تلگرام |
 | template_key | `welcome_menu` \| `dating` \| `content` \| `bombland` \| `duel` \| `favaani` \| `shlinks` \| `whoseeme` \| `faal` \| `anonychat` \| `tapearn` |
 | status | `stopped` \| `starting` \| `running` \| `error` |
 
@@ -70,7 +71,7 @@ audit_logs
 ## کاربران هر بات
 
 ### `bot_end_users`
-`(bot_id, telegram_id)` UNIQUE — `state jsonb` (scene/step/data), `is_blocked`, `first_seen_at`, `last_seen_at`
+`(bot_id, platform, telegram_id)` UNIQUE (migration 0013 — شماره‌ها بین پلتفرم‌ها ممکن است برخورد کنند) — `platform text` (`telegram`|`kat`)، `state jsonb` (scene/step/data), `is_blocked`, `first_seen_at`, `last_seen_at`
 
 ### `bot_user_events`
 `kind`: `inbound_message` | `outbound_message` | `callback` | `command` | `user_start` | `state_change`
@@ -87,7 +88,7 @@ audit_logs
 ## تمپلیت دوستیابی
 
 ### `dating_profiles` — PK مرکب `(bot_id, user_id)`
-`name`, `gender`, `age`, `province`, `city`, `interests text[]`, `status`, `partner_user_id`, `rating`, `coins`, `photo_file_id`, `is_ghost`, `streak_count`, `blocked_at`
+`name`, `gender`, `age`, `province`, `city`, `interests text[]`, `status`, `partner_user_id`, `rating`, `coins`, `photo_file_id`, `is_ghost`, `streak_count`, `blocked_at`, `platform` (`telegram`|`kat` — آدرس چت برای relay بین‌پلتفرمی)
 
 ### `dating_search_requests`
 `(bot_id, user_id)` UNIQUE — `filters jsonb`, `created_at`
@@ -204,6 +205,7 @@ audit_logs
 | 0010 | content | content_posts (ledger) |
 | 0011 | game_templates | bombland_players، bombland_referrals، duel_players، duel_withdrawals، duel_pools |
 | 0012 | more_bots | favaani_*، shlinks_*، whoseeme_*، faal_*، anonychat_*، tapearn_* |
+| 0013 | kat_platform | پلتفرم کت (cr0.ir): `bots.kat_token_encrypted/kat_username`، `platform` روی `bot_end_users` و `dating_profiles`، UNIQUE سه‌تایی هویت |
 
 ## الگوهای اتمیک
 

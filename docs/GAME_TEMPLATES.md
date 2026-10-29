@@ -160,6 +160,8 @@ if !strings.HasPrefix(action, "act:") {
 
 بدون این نرمال‌سازی، `switch action { case "act:tap": ... }` هرگز match نمیشد و **تمام دکمه‌های inline مرده بودند** (باگ ۲۰۲۶-۱۰-۲۶ رفع شد — با تست‌های E2E پیدا شد).
 
+**callback های label (۲۰۲۶-۱۰-۲۷)**: کت reply keyboard ها را خاموش میکند، پس کلاینت آنها را به inline تبدیل میکند که callback_dataشان **خود برچسب دکمه** است (بدون پیشوند). موتور اینها را مثل متن تایپ‌شده route میکند: اول `HandleMessage`، بعد `LookupLabel`. callback های واقعی (`act:`/`scene:`/`url:`) مثل قبل به `DispatchAction` میروند — پس در `HandleAction` فقط داده‌های با‌پیشوند می‌بینید.
+
 ### الگوی CTE در UPDATE…RETURNING (مهم)
 
 Postgres در `RETURNING` مقادیر **NEW** را میبیند نه OLD. هر جا مقدار قبل از UPDATE لازم است، باید با CTE مقدار قدیمی capture شود — سه مورد رفع‌شده (۲۰۲۶-۱۰-۲۶):

@@ -33,9 +33,9 @@
 | مسیر | دسترسی | توضیح |
 |---|---|---|
 | `GET /bots` | authed | لیست بات‌ها + `running` |
-| `POST /bots` | **superadmin** | `{name, token, template_key}` |
+| `POST /bots` | **superadmin** | `{name, token, kat_token?, template_key}` |
 | `GET /bots/{botID}` | `bot:read` | `{bot, running}` |
-| `PATCH /bots/{botID}` | `bot:config` | `{name?, template_key?, token?}` |
+| `PATCH /bots/{botID}` | `bot:config` | `{name?, template_key?, token?, kat_token?}` |
 | `DELETE /bots/{botID}` | superadmin | حذف کامل |
 | `POST /bots/{botID}/start` | `bot:runtime` | استارت |
 | `POST /bots/{botID}/stop` | `bot:runtime` | توقف |
