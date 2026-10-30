@@ -1,10 +1,12 @@
 package dating
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"sadbot/internal/domain"
+	"sadbot/internal/repository/postgres"
 )
 
 func datingProfileFixture(name string, age int, city string) domain.DatingProfile {
@@ -119,5 +121,55 @@ func TestBrowseHomeButtonsNavigate(t *testing.T) {
 	e.feed(t, e.sendA, "👤 پروفایل من")
 	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "حساب شما") {
 		t.Fatalf("profile page not reachable after wallet: %#v", e.sendA.sent)
+	}
+}
+
+// TestBrowseExcludesGhosts: the browse deck must only ever show real users —
+// seeded ghost personas (complete profiles, opposite gender) must never
+// appear as cards.
+func TestBrowseExcludesGhosts(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	ghosts, err := e.store.EnsureGhosts(ctx, e.botID, 5)
+	if err != nil {
+		t.Fatalf("ensure ghosts: %v", err)
+	}
+	if len(ghosts) == 0 {
+		t.Fatal("ghost pool not seeded")
+	}
+
+	// only ghosts in the pool → deck must be empty, not ghost-filled
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "کسی برای مرور") {
+		t.Fatalf("empty deck must not be filled with ghosts: %#v", e.sendA.sent)
+	}
+
+	// a real female joins — she is the card, ghosts stay hidden
+	e.onboard(t, e.sendB, "نرگس", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "نرگس") {
+		t.Fatalf("real user must appear in deck: %#v", e.sendA.sent)
+	}
+	for _, ghost := range []string{"مینا", "سارا", "نگین", "پریسا"} {
+		if msg := e.sendA.lastTo(111); msg != nil && strings.Contains(msg.Text, ghost) {
+			t.Fatalf("ghost %s leaked into browse deck: %q", ghost, msg.Text)
+		}
+	}
+
+	// direct query: no ghost may ever be returned, filters on or off
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	cands, err := e.store.Repo().BrowseCandidatesFiltered(ctx, e.botID, pA.UserID, postgres.BrowseFilter{}, 20)
+	if err != nil {
+		t.Fatalf("browse query: %v", err)
+	}
+	for _, c := range cands {
+		if c.IsGhost {
+			t.Fatalf("ghost %s leaked into browse query", derefStr(c.Name))
+		}
 	}
 }

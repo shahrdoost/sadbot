@@ -471,7 +471,8 @@ func (r *DatingRepo) CountSuperSince(ctx context.Context, botID uuid.UUID, fromU
 }
 
 // BrowseCandidates returns one complete, opposite-gender, never-reacted profile
-// (status joined; blocks respected both ways; most recently seen first).
+// (status joined; ghosts excluded — the deck shows real users only; blocks
+// respected both ways; most recently seen first).
 // BrowseFilter narrows the Tinder-style deck (kpkchat «جستجوی کاربران»
 // filtered browse). Zero values = no constraint.
 type BrowseFilter struct {
@@ -491,6 +492,7 @@ func (r *DatingRepo) BrowseCandidatesFiltered(ctx context.Context, botID uuid.UU
 	rows, err := r.db.Query(ctx, `
 		SELECT `+datingCols+` FROM dating_profiles p
 		WHERE p.bot_id = $1 AND p.user_id <> $2 AND p.status = 'joined'
+			AND NOT p.is_ghost
 			AND p.name IS NOT NULL AND p.name <> '' AND p.gender IS NOT NULL
 			AND ($3 = '' OR p.gender = $3)
 			AND ($5 = '' OR p.province = $5)
