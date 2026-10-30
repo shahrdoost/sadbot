@@ -51,7 +51,16 @@ func TestGhostChatFlow(t *testing.T) {
 	if !gp.IsGhost {
 		t.Fatal("partner must be a ghost")
 	}
-	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "وصلت انجام شد") {
+	// the match message must have been delivered — not necessarily last:
+	// the async ghost opener (ghost_reply_delay_ms=1) can land after it
+	matchSeen := false
+	for _, msg := range e.sendA.sent {
+		if msg.ChatID == 111 && contains(msg.Text, "وصلت انجام شد") {
+			matchSeen = true
+			break
+		}
+	}
+	if !matchSeen {
 		t.Fatalf("human did not get match message: %+v", e.sendA.sent)
 	}
 
