@@ -93,11 +93,11 @@ func (r *DatingRepo) UpdateProfile(ctx context.Context, botID uuid.UUID, userID 
 
 // SetStatus atomically transitions status; CAS on fromStatus ("" = any).
 func (r *DatingRepo) SetStatus(ctx context.Context, botID uuid.UUID, userID int64, from, to string) (bool, error) {
-	q := `UPDATE dating_profiles SET status = $4 WHERE bot_id = $1 AND user_id = $2`
-	args := []any{botID, userID, nil, to}
+	q := `UPDATE dating_profiles SET status = $3 WHERE bot_id = $1 AND user_id = $2`
+	args := []any{botID, userID, to}
 	if from != "" {
-		args[2] = from
-		q += ` AND status = $3`
+		q += ` AND status = $4`
+		args = append(args, from)
 	}
 	tag, err := r.db.Exec(ctx, q, args...)
 	if err != nil {

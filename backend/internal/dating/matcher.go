@@ -15,6 +15,16 @@ import (
 // Notifier sends a message to a chat on behalf of a bot (injected; testable).
 type Notifier func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error
 
+// ReachFunc reports whether a bot's platform side is live. A cross-platform
+// pair is only commit-able when BOTH sides can deliver the match message —
+// otherwise the claimed chat is a phantom (status=chatting, one side never
+// told). nil = unknown (single-platform setups, tests) → treated as live.
+type ReachFunc func(botID uuid.UUID, platform string) bool
+
+// matchPair is a paired-but-undelivered match, held out of ClaimMatch until
+// both sides are reachable; dropped if either user leaves the queue meanwhile.
+type matchPair struct{ a, b Searcher }
+
 // Matcher runs the global 5s matching loop + search timeout sweep for all
 // running dating bots (kpkchat match-queue + search-timer port).
 type Matcher struct {
@@ -24,6 +34,9 @@ type Matcher struct {
 	interval time.Duration
 	pricesOf func(uuid.UUID) map[string]any
 	textsOf  func(uuid.UUID) map[string]any
+	reach    ReachFunc
+	// parked holds pairs waiting on platform reachability, per bot.
+	parked map[uuid.UUID][]matchPair
 }
 
 // BotLister yields (botID) pairs of running dating bots.
@@ -35,7 +48,15 @@ func NewMatcher(store *Store, bots BotLister, notify Notifier) *Matcher {
 	return &Matcher{
 		store: store, bots: bots, notify: notify,
 		interval: 5 * time.Second,
+		parked:   map[uuid.UUID][]matchPair{},
 	}
+}
+
+// SetReachFunc injects platform reachability (the runtime manager).
+func (m *Matcher) SetReachFunc(fn ReachFunc) { m.reach = fn }
+
+func (m *Matcher) reachable(botID uuid.UUID, platform string) bool {
+	return m.reach == nil || m.reach(botID, platform)
 }
 
 // SetPricesFunc injects per-bot merged prices (ghost thresholds etc.).
@@ -84,13 +105,86 @@ func (m *Matcher) Tick(ctx context.Context) {
 	}
 	for _, botID := range botIDs {
 		m.sweepTimeouts(ctx, botID)
-		m.matchOnce(ctx, botID)
+		m.matchOnceGated(ctx, botID)
 		m.injectGhosts(ctx, botID)
 	}
 }
 
-// matchOnce greedily pairs searchers (kpkchat pickBestPair, O(n²)).
+// matchOnceGated drains parked pairs first, then greedily pairs searchers —
+// a pair commits only when both sides are live to claim it.
+func (m *Matcher) matchOnceGated(ctx context.Context, botID uuid.UUID) {
+	m.drainParked(ctx, botID)
+	m.matchOnce(ctx, botID)
+}
+
+// drainParked commits previously-paired matches once both sides are reachable
+// and both users are still queueing; a pair that already moved on (status
+// changed) is dropped. The "+1" loop handles the grow-during-iteration case
+// down to nothing.
+func (m *Matcher) drainParked(ctx context.Context, botID uuid.UUID) {
+	i := 0
+	for i < len(m.parked[botID]) {
+		p := m.parked[botID][i]
+		if !m.stillSearching(ctx, botID, p) {
+			m.dropParked(botID, i)
+			continue
+		}
+		if !m.reachable(botID, p.a.Platform) || !m.reachable(botID, p.b.Platform) {
+			i++
+			continue
+		}
+		ok, err := m.store.ClaimMatch(ctx, botID, p.a.UserID, p.b.UserID)
+		if err != nil {
+			log.Printf("[matcher] parked claim: %v", err)
+			i++
+			continue
+		}
+		if !ok {
+			m.dropParked(botID, i) // someone else beat us to it
+			continue
+		}
+		_ = m.store.SetScene(ctx, botID.String(), p.a.UserID, "chat")
+		_ = m.store.SetScene(ctx, botID.String(), p.b.UserID, "chat")
+		m.notifyMatch(botID, p.a, p.b)
+		m.dropParked(botID, i)
+	}
+}
+
+func (m *Matcher) dropParked(botID uuid.UUID, idx int) {
+	q := m.parked[botID]
+	m.parked[botID] = append(q[:idx], q[idx+1:]...)
+}
+
+func (m *Matcher) stillSearching(ctx context.Context, botID uuid.UUID, p matchPair) bool {
+	for _, s := range []Searcher{p.a, p.b} {
+		ok, err := m.store.IsSearching(ctx, botID, s.UserID)
+		if err != nil || !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Matcher) park(botID uuid.UUID, a, b Searcher) {
+	log.Printf("[matcher] parked: waiting for platform availability (bot=%s %s↔%s)",
+		botID, a.Platform, b.Platform)
+	m.parked[botID] = append(m.parked[botID], matchPair{a: a, b: b})
+}
+
+// parkIDSet returns users already waiting inside a parked pair.
+func (m *Matcher) parkIDSet(botID uuid.UUID) map[int64]bool {
+	out := map[int64]bool{}
+	for _, p := range m.parked[botID] {
+		out[p.a.UserID] = true
+		out[p.b.UserID] = true
+	}
+	return out
+}
+
+// matchOnce greedily pairs searchers (kpkchat pickBestPair, O(n²)) via matchOnceGated.
 func (m *Matcher) matchOnce(ctx context.Context, botID uuid.UUID) {
+	// anyone inside a parked pair waits there — not here.
+	busy := m.parkIDSet(botID)
 	searchers, err := m.store.LoadSearchers(ctx, botID)
 	if err != nil || len(searchers) < 2 {
 		return
@@ -98,7 +192,7 @@ func (m *Matcher) matchOnce(ctx context.Context, botID uuid.UUID) {
 	used := make(map[int64]bool, len(searchers))
 	for i := range searchers {
 		a := searchers[i]
-		if used[a.UserID] {
+		if used[a.UserID] || busy[a.UserID] {
 			continue
 		}
 		bestIdx := -1
@@ -108,7 +202,7 @@ func (m *Matcher) matchOnce(ctx context.Context, botID uuid.UUID) {
 				continue
 			}
 			b := searchers[j]
-			if used[b.UserID] {
+			if used[b.UserID] || busy[b.UserID] {
 				continue
 			}
 			if blocked, _ := m.store.IsBlocked(ctx, botID, a.UserID, b.UserID); blocked {
@@ -127,6 +221,12 @@ func (m *Matcher) matchOnce(ctx context.Context, botID uuid.UUID) {
 			continue
 		}
 		b := searchers[bestIdx]
+		// cross-platform soundness: commit only when both sides are live
+		if !m.reachable(botID, a.Platform) || !m.reachable(botID, b.Platform) {
+			m.park(botID, a, b)
+			used[a.UserID], used[b.UserID] = true, true
+			continue
+		}
 		ok, err := m.store.ClaimMatch(ctx, botID, a.UserID, b.UserID)
 		if err != nil {
 			log.Printf("[matcher] claim: %v", err)

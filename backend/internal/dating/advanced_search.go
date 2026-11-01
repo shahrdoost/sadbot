@@ -335,7 +335,7 @@ func startAdvancedSearch(bc *engine.BotContext, st *Store) bool {
 		"gender": gender, "province": province, "city": city,
 		"age_min": ageMin, "age_max": ageMax,
 		"interests": interests,
-		"cost": cost, "timeout_sec": bc.PriceInt("search_advanced_timeout", 180), "advanced": true,
+		"cost":      cost, "timeout_sec": bc.PriceInt("search_advanced_timeout", 180), "advanced": true,
 	}
 	if err := st.StartSearchWithFilters(ctx, botID, bc.UserID, filters); err != nil {
 		if cost > 0 && !hasSubscription(bc, botID) {

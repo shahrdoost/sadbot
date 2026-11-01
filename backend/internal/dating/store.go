@@ -210,7 +210,7 @@ func (s *Store) LoadSearchers(ctx context.Context, botID uuid.UUID) ([]Searcher,
 			Interests: r.Interests, Filter: r.Filter,
 			ProvinceFilter: r.ProvinceFilter, CityFilter: r.CityFilter,
 			InterestsFilter: r.InterestsFilter,
-			AgeMin: r.AgeMin, AgeMax: r.AgeMax,
+			AgeMin:          r.AgeMin, AgeMax: r.AgeMax,
 			CreatedAt: r.CreatedAt,
 		}
 		if r.Gender != nil {

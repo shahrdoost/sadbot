@@ -426,6 +426,39 @@ func (bc *BotContext) SendTo(chatID int64, text string, replyTo int64) (*telegra
 	return bc.Sender.Send(context.Background(), chatID, text, nil, replyTo)
 }
 
+// SendNowToPlatform is the raw cross-platform send with a caller-supplied
+// context — used by pending-delivery closures that retry a parked send
+// outside the update that parked it.
+func (bc *BotContext) SendNowToPlatform(ctx context.Context, platform string, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error) {
+	if platform == bc.Platform {
+		return bc.Sender.Send(ctx, chatID, text, kbd, replyTo)
+	}
+	if bc.router == nil {
+		return nil, errors.New("cross-platform send: no router configured")
+	}
+	botID, err := uuid.Parse(bc.BotID)
+	if err != nil {
+		return nil, err
+	}
+	return bc.router.SendPlatform(ctx, botID, platform, chatID, text, kbd, replyTo)
+}
+
+// ForwardNowToPlatform mirrors SendNowToPlatform for media relays.
+func (bc *BotContext) ForwardNowToPlatform(ctx context.Context, platform string, fromChatID, toChatID, messageID int64) (*telegram.Message, error) {
+	if platform == bc.Platform {
+		return bc.ForwardMediaTo(toChatID, fromChatID, messageID)
+	}
+	if bc.router == nil {
+		return nil, errors.New("cross-platform forward: no router configured")
+	}
+	botID, err := uuid.Parse(bc.BotID)
+	if err != nil {
+		return nil, err
+	}
+	m, err := bc.router.ForwardMediaPlatform(ctx, botID, platform, fromChatID, toChatID, messageID)
+	return m, mediaErr(err)
+}
+
 // SendToPlatform delivers to a chat on a specific platform — the partner in a
 // cross-platform chat may live on a different endpoint than the current
 // update. Same-platform targets short-circuit to Sender.
@@ -502,6 +535,10 @@ func mediaErr(err error) error {
 }
 
 // ErrMediaUnsupported means the configured sender cannot relay media.
+
+// ErrPlatformDown marks "the bot's runtime side for this platform is down" —
+// a transient, retryable condition callers must NOT read as a dead partner.
+var ErrPlatformDown = errors.New("platform side not running")
 var ErrMediaUnsupported = errors.New("media forwarding is not supported")
 
 // RecordInbound stores a synthetic inbound message for the current scene.

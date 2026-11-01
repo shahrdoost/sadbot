@@ -26,8 +26,8 @@ type routedSend struct {
 }
 
 type routedForward struct {
-	Platform string
-	ToChatID int64
+	Platform  string
+	ToChatID  int64
 	FromChat  int64
 	MessageID int64
 }

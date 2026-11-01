@@ -65,11 +65,11 @@ func TestFilteredBrowseWizard(t *testing.T) {
 	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "رایگان") {
 		t.Fatalf("browse-mode wizard intro must mention it's free, got %#v", msg)
 	}
-	e.feed(t, e.sendA, "همه")        // gender
-	e.feed(t, e.sendA, "اصفهان")     // province
-	e.feed(t, e.sendA, "اصفهان")     // city (اصفهان is a city of استان اصفهان)
+	e.feed(t, e.sendA, "همه")          // gender
+	e.feed(t, e.sendA, "اصفهان")       // province
+	e.feed(t, e.sendA, "اصفهان")       // city (اصفهان is a city of استان اصفهان)
 	e.feed(t, e.sendA, "بدون محدودیت") // age range
-	e.feed(t, e.sendA, "✔️ تایید")    // confirm interests (empty = no filter)
+	e.feed(t, e.sendA, "✔️ تایید")     // confirm interests (empty = no filter)
 	msg := e.sendA.lastTo(111)
 	if msg == nil || !strings.Contains(msg.Text, "رایگان") || !strings.Contains(msg.Text, "اصفهان") {
 		t.Fatalf("browse-mode confirm must show free + city filter, got %#v", msg)
@@ -90,10 +90,10 @@ func TestFilteredBrowseWizard(t *testing.T) {
 	// exit, then «جستجوی ویژه» with an age range that excludes B → empty deck
 	e.feed(t, e.sendA, "🏠 منوی اصلی")
 	e.feed(t, e.sendA, "🔍 جستجوی ویژه")
-	e.feed(t, e.sendA, "همه")           // gender
+	e.feed(t, e.sendA, "همه")          // gender
 	e.feed(t, e.sendA, "همه استان‌ها") // province (skip city)
-	e.feed(t, e.sendA, "۲۸-۳۲")         // age range 28-32, B is 22 so excluded
-	e.feed(t, e.sendA, "✔️ تایید")      // confirm interests (empty)
+	e.feed(t, e.sendA, "۲۸-۳۲")        // age range 28-32, B is 22 so excluded
+	e.feed(t, e.sendA, "✔️ تایید")     // confirm interests (empty)
 	e.feed(t, e.sendA, "🔎 نمایش پروفایل‌ها")
 	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "باقی نمونده") {
 		t.Fatalf("age-filtered empty deck must say empty, got %#v", msg)
@@ -105,10 +105,10 @@ func TestFilteredBrowseWizard(t *testing.T) {
 	// sanity: the timed advanced search entry is unchanged (paid copy)
 	e.feed(t, e.sendA, "🔗 به یک ناشناس وصلم کن")
 	e.feed(t, e.sendA, "🔍 جستجوی پیشرفته")
-	e.feed(t, e.sendA, "همه")           // gender
+	e.feed(t, e.sendA, "همه")          // gender
 	e.feed(t, e.sendA, "همه استان‌ها") // province (skip city)
-	e.feed(t, e.sendA, "بدون محدودیت")  // age range
-	e.feed(t, e.sendA, "✔️ تایید")      // confirm interests (empty)
+	e.feed(t, e.sendA, "بدون محدودیت") // age range
+	e.feed(t, e.sendA, "✔️ تایید")     // confirm interests (empty)
 	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "جستجوی زمان‌دار") {
 		t.Fatalf("timed advanced wizard must keep its paid confirm copy, got %#v", msg)
 	}

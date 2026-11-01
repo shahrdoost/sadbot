@@ -2,6 +2,7 @@ package dating
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -792,9 +793,21 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 	}
 
 	if _, err := bc.ForwardMediaToPlatform(partnerPlatform, partnerTelegram, bc.ChatID, msg.MessageID); err != nil {
-		if errors.Is(err, engine.ErrMediaUnsupported) {
+		switch {
+		case errors.Is(err, engine.ErrMediaUnsupported):
+			// Kat subset can't copy media — degrade, never kill the chat
 			bc.Reply("فقط متن منتقل میشه؛ رسانه در دسترس نیست.")
-		} else {
+		case errors.Is(err, engine.ErrPlatformDown):
+			// partner's side is flapping: park the forward, keep the chat
+			bc.Reply("رسانه ثبت شد و به‌محض برگشتن مخاطب ارسال میشه 🙌")
+			fromChat := bc.ChatID
+			msgID := msg.MessageID
+			enqueuePending("media:"+botID.String()+":"+label,
+				sendWithBudget(func(c context.Context) (*telegram.Message, error) {
+					return bc.ForwardNowToPlatform(c, partnerPlatform, fromChat, partnerTelegram, msgID)
+
+				}), nil)
+		default:
 			forceEndToRating(bc, st, botID, "partner_unreachable")
 		}
 		return true
@@ -880,14 +893,38 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 	if err != nil {
 		// retry once without reply anchor (kpkchat fix)
 		sent, err = bc.SendToPlatform(partnerPlatform, partnerTelegram, text, 0)
-		if err != nil {
+	}
+	// log the mirrored message on the partner's side regardless of transport:
+	// the panel feed follows the conversation, not network health
+	_ = st.Repo().RecordOutboundForPartner(ctx, botID, *p.PartnerUserID, text)
+	if err != nil {
+		if errors.Is(err, engine.ErrPlatformDown) {
+			// partner's side is down (restarting/flapping): park the text and
+			// answer back — the chat STAYS alive, delivery is our problem
+			bc.Reply("پیامت برای مخاطب ثبت شد و به‌محض برگشتن ارسال میشه. چت از همین‌جا ادامه داره 🙌")
+		} else if relayPermanent(err) {
+			forceEndToRating(bc, st, botID, "partner_unreachable")
+			return true
+		} else {
 			forceEndToRating(bc, st, botID, "partner_unreachable")
 			return true
 		}
+		enqueuePending("chat:"+botID.String()+":"+text[:min(20, len(text))],
+			sendWithBudget(func(c context.Context) (*telegram.Message, error) {
+				return bc.SendNowToPlatform(c, partnerPlatform, partnerTelegram, text, nil, 0)
+			}),
+			func(queued *telegram.Message) {
+				if queued == nil {
+					return
+				}
+				// bind the reply map once it actually lands (id may differ)
+				_ = st.BindReply(context.Background(), botID, bc.UserID, bc.MsgID,
+					*p.PartnerUserID, queued.MessageID)
+				_ = st.BindReply(context.Background(), botID, *p.PartnerUserID,
+					queued.MessageID, bc.UserID, bc.MsgID)
+			})
+		return true
 	}
-	// log the forwarded message on the partner's side so the panel feed
-	// shows both directions of the conversation
-	_ = st.Repo().RecordOutboundForPartner(ctx, botID, *p.PartnerUserID, text)
 	_ = st.BindReply(ctx, botID, bc.UserID, bc.MsgID, *p.PartnerUserID, sent.MessageID)
 	_ = st.BindReply(ctx, botID, *p.PartnerUserID, sent.MessageID, bc.UserID, bc.MsgID)
 	return true
@@ -971,7 +1008,17 @@ func forceEndToRating(bc *engine.BotContext, st *Store, botID uuid.UUID, reason 
 			if reason == "partner_dead" || reason == "partner_unreachable" {
 				msg = "مخاطب در دسترس نیست.\nمکالمه پایان یافت."
 			}
-			_, _ = bc.SendKBDToPlatform(partnerPlatform, partnerTelegram, msg, ratingRows)
+			if _, serr := bc.SendKBDToPlatform(partnerPlatform, partnerTelegram, msg, ratingRows); serr != nil {
+				// the rating prompt must still reach the partner;
+				// platform-down gets the retry schedule
+				if errors.Is(serr, engine.ErrPlatformDown) {
+					raw, _ := json.Marshal(map[string]any{"keyboard": ratingRows, "resize_keyboard": true})
+					enqueuePending("rating:"+botID.String(),
+						sendWithBudget(func(c context.Context) (*telegram.Message, error) {
+							return bc.SendNowToPlatform(c, partnerPlatform, partnerTelegram, msg, raw, 0)
+						}), nil)
+				}
+			}
 		}
 		if err := st.EndChatForBoth(ctx, botID, bc.UserID, *p.PartnerUserID); err != nil {
 			log.Printf("[dating] end chat both: %v", err)

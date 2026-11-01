@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	anonychatpkg "sadbot/internal/anonychat"
 	"sadbot/internal/api"
 	"sadbot/internal/api/handlers"
-	anonychatpkg "sadbot/internal/anonychat"
 	bomblandpkg "sadbot/internal/bombland"
-	contentpkg "sadbot/internal/content"
 	"sadbot/internal/config"
+	contentpkg "sadbot/internal/content"
 	datingpkg "sadbot/internal/dating"
 	"sadbot/internal/domain"
 	duelpkg "sadbot/internal/duel"
@@ -35,9 +35,9 @@ import (
 	"sadbot/internal/service"
 	shlinkspkg "sadbot/internal/shlinks"
 	tapearnpkg "sadbot/internal/tapearn"
-	whoseemepkg "sadbot/internal/whoseeme"
 	"sadbot/internal/telegram"
 	"sadbot/internal/tgsidecar"
+	whoseemepkg "sadbot/internal/whoseeme"
 	pgcrypto "sadbot/pkg/crypto"
 
 	"github.com/google/uuid"
@@ -178,16 +178,29 @@ func main() {
 	// global matcher (5s tick + search timeout sweep + ghost injection)
 	matcher := datingpkg.NewMatcher(datingStore, botRepo,
 		func(botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage) error {
-			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
-			if !ok {
-				return nil // bot/platform not running; notifications skipped
+			// a half-dead side parks the notification with the retry schedule
+			// instead of swallowing it (the matcher parks the pair for it);
+			// a fully live side with a failed send parks too — a lost
+			// «وصلت انجام شد» must not strand a matched couple.
+			send := func(c context.Context) (*telegram.Message, error) {
+				client, ok := runtimeMgr.ClientForPlatform(botID, platform)
+				if !ok {
+					return nil, engine.ErrPlatformDown
+				}
+				return client.SendMessage(c, telegram.SendMessagePayload{
+					ChatID: chatID, Text: text, ReplyMarkup: kbd,
+				})
 			}
-			_, err := client.SendMessage(ctx, telegram.SendMessagePayload{
-				ChatID: chatID, Text: text, ReplyMarkup: kbd,
-			})
-			return err
+			if _, err := send(ctx); err != nil {
+				datingpkg.EnqueueMatcherNotify(botID, platform, chatID, text, kbd, send)
+				return err
+			}
+			return nil
 		})
 	matcher.SetPricesFunc(pricesOf)
+	// platform reachability: a cross-platform pair is only committed when
+	// both sides are live, and parked pairs drain when they come back.
+	matcher.SetReachFunc(runtimeMgr.PlatformRunning)
 	textsOf := func(botID uuid.UUID) map[string]any {
 		texts, _, _, err := configStore.GetMerged(ctx, botID.String(), datingTemplate)
 		if err != nil {
@@ -407,6 +420,9 @@ func main() {
 	if err := runtimeMgr.StartRunningBots(ctx); err != nil {
 		log.Printf("start running bots: %v", err)
 	}
+	// dead sides (endpoint down at boot, transient GetMe failure) keep
+	// retrying for the life of the process — see runtime.Manager.Reconcile
+	go runtimeMgr.Run(ctx)
 
 	// daily retention purge
 	go retentionLoop(ctx, eventRepo, cfg.EventRetentionDays)

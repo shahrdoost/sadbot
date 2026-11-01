@@ -89,7 +89,7 @@ func TestHomeNavFromEveryScene(t *testing.T) {
 
 	// the timed-search scene's home button must also exit
 	e.feed(t, e.sendA, "🔗 به یک ناشناس وصلم کن") // search menu (home scene)
-	e.feed(t, e.sendA, "🔗 غریبه")                 // enters search scene
+	e.feed(t, e.sendA, "🔗 غریبه")                // enters search scene
 	if scene() != "search" {
 		t.Fatalf("expected search scene, got %q", scene())
 	}
