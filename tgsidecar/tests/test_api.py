@@ -502,12 +502,92 @@ def test_proxy_block_plain_labels():
     assert urls == ["https://t.me/proxy?server=1.2.3.4&port=8443&secret=EERighJJvXrFGRMCIMjdCQ"]
 
 
-def test_proxy_unusable_host_gets_generic_link():
+def test_proxy_unusable_host_kept_without_dead_link():
     from app.telegram_api import _copyable
 
     body, ents = _copyable("Server: Unknown\nPort: 8443\nSecret: EERighJJvXrFGRMCIMjdCQ")
-    urls = [e.url for e in ents if getattr(e, "url", None)]
-    assert urls == ["https://t.me/proxy"], "placeholder host must not build a dead link"
+    urls = [e.url for e in (ents or []) if getattr(e, "url", None)]
+    assert urls == [], "placeholder host must not build a link (bare t.me/proxy opens @proxy)"
+    assert "Server: Unknown" in body, "unusable block must survive as plain text"
+
+
+def test_proxy_url_host_gets_extracted():
+    from app.telegram_api import _copyable
+
+    text = (
+        "Server: http://love.piglio.online/c1c7b0001f2c\n"
+        "Port: 443\n"
+        "Secret: dd8fbaa0a0124101a02dde083cd3613e09"
+    )
+    body, ents = _copyable(text)
+    urls = [e.url for e in (ents or []) if getattr(e, "url", None)]
+    assert urls == [
+        "https://t.me/proxy?server=love.piglio.online&port=443&secret=dd8fbaa0a0124101a02dde083cd3613e09"
+    ]
+    assert "c1c7b0001f2c" not in body, "URL-shaped server must not survive as plain text"
+
+
+def test_proxy_links_in_text_leave_block_alone():
+    from app.telegram_api import _copyable
+
+    text = (
+        "Server: 1.2.3.4\nPort: 8443\nSecret: EERighJJvXrFGRMCIMjdCQ\n\n"
+        "[🔒 اتصال](https://t.me/proxy?server=9.9.9.9&port=443&secret=dd00)"
+    )
+    body, ents = _copyable(text)
+    urls = [e.url for e in (ents or []) if getattr(e, "url", None)]
+    assert urls == ["https://t.me/proxy?server=9.9.9.9&port=443&secret=dd00"]
+    assert "1.2.3.4" in body, "existing proxy link means the block must not be rewritten"
+    assert "[🔒 اتصال]" not in body, "markdown link must render as entity, not text"
+
+
+def test_serialize_message_extracts_proxy_urls():
+    from types import SimpleNamespace
+
+    from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
+
+    from app.schemas import serialize_message
+
+    text = "see https://t.me/proxy?server=9.9.9.9&port=443&secret=aa now"
+    off = text.index("https://")
+    msg = SimpleNamespace(
+        id=7,
+        date=None,
+        sender=None,
+        out=False,
+        post_author=None,
+        message=text,
+        reply_to=None,
+        forward=None,
+        photo=None,
+        sticker=None,
+        voice=None,
+        video=None,
+        audio=None,
+        document=None,
+        media=None,
+        entities=[
+            MessageEntityTextUrl(offset=0, length=3, url="https://t.me/webproxy?server=x&secret=y"),
+            MessageEntityUrl(offset=off, length=len("https://t.me/proxy?server=9.9.9.9&port=443&secret=aa")),
+        ],
+        reply_markup=SimpleNamespace(
+            rows=[
+                SimpleNamespace(
+                    buttons=[
+                        SimpleNamespace(url="https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00"),
+                        SimpleNamespace(url="https://example.com/not-proxy"),
+                        SimpleNamespace(url=None),
+                    ]
+                )
+            ]
+        ),
+    )
+    info = serialize_message(msg)
+    assert info.proxy_urls == [
+        "https://t.me/webproxy?server=x&secret=y",
+        "https://t.me/proxy?server=9.9.9.9&port=443&secret=aa",
+        "https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00",
+    ], "proxy deep-links from entities and URL buttons only, order kept, no dupes"
 
 
 def test_config_uri_untouched():

@@ -668,3 +668,92 @@ func TestStripForeignMentions(t *testing.T) {
 		t.Errorf("source handle survived: %q", out2)
 	}
 }
+
+func TestAttachProxyLinks(t *testing.T) {
+	u1 := "https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00"
+	u2 := "https://t.me/proxy?server=5.6.7.8&port=8443&secret=ee11"
+
+	t.Run("block replaced by numbered links", func(t *testing.T) {
+		in := "🔒 پروکسی MTProto\n\nServer: Unknown\nPort: 7443\nSecret: AAAAAAAAAAAAAAAAAAAAABQ=\n\nبرای اتصال، سکرت را در تنظیمات پروکسی تلگرام وارد کنید.\n\nادامه."
+		out := attachProxyLinks(in, []string{u1, u2})
+		for _, bad := range []string{"Server: Unknown", "Port: 7443", "وارد کنید"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("still contains %q in %q", bad, out)
+			}
+		}
+		if !strings.Contains(out, "[🔒 اتصال به پروکسی ۱]("+u1+")") || !strings.Contains(out, "[🔒 اتصال به پروکسی ۲]("+u2+")") {
+			t.Errorf("numbered connect links missing: %q", out)
+		}
+		if !strings.Contains(out, "🔒 پروکسی MTProto") || !strings.Contains(out, "ادامه.") {
+			t.Errorf("surrounding text lost: %q", out)
+		}
+	})
+
+	t.Run("single link keeps the direct label", func(t *testing.T) {
+		out := attachProxyLinks("Server: Unknown\nPort: 443\nSecret: EERighJJvXrFGRMCIMjdCQ", []string{u1})
+		if !strings.Contains(out, "[🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن]("+u1+")") {
+			t.Errorf("direct label missing: %q", out)
+		}
+	})
+
+	t.Run("no urls unchanged", func(t *testing.T) {
+		in := "Server: Unknown\nPort: 443\nSecret: EERighJJvXrFGRMCIMjdCQ"
+		if out := attachProxyLinks(in, nil); out != in {
+			t.Errorf("got %q", out)
+		}
+	})
+
+	t.Run("no block appends links", func(t *testing.T) {
+		out := attachProxyLinks("پروکسی جدید رسید.", []string{u1})
+		if !strings.HasSuffix(out, "[🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن]("+u1+")") {
+			t.Errorf("link not appended: %q", out)
+		}
+	})
+}
+
+func TestCollectorTextOnlyInjectsProxyLinks(t *testing.T) {
+	// @ProxyMTProto-style posts: placeholder "Server: Unknown" block in text,
+	// real endpoints on the URL buttons — the published post must carry the
+	// connect links, not the dead block.
+	c, store, side, l, _, _, _ := newTestCollector(t)
+	c.SetPublisherViaMeta(func(_ context.Context, _ uuid.UUID, _, channel, caption string, photos [][]byte, _ string) error {
+		side.sentMeta = append(side.sentMeta, publishCall{channel: channel, caption: caption, numPngs: len(photos)})
+		return nil
+	})
+	c.SetPricesFunc(func(uuid.UUID) map[string]any {
+		return map[string]any{
+			"content_account_id":  "acc1",
+			"content_channel":     "@mr_vpn_here",
+			"content_folder":      "Crypto",
+			"content_publish_via": "sidecar",
+			"content_text_only":   true,
+			"content_min_length":  10,
+			"brand_handle":        "@mr_vpn_here",
+		}
+	})
+	l.replies = []string{"Server: Unknown\nPort: 7443\nSecret: AAAAAAAAAAAAAAAAAAAAABQ="}
+	side.messages["-100111"] = []tgsidecar.Message{{
+		ID:   30,
+		Text: "Server: Unknown\nPort: 7443\nSecret: AAAAAAAAAAAAAAAAAAAAABQ=",
+		ProxyURLs: []string{
+			"https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00",
+			"https://t.me/webproxy?server=zov.example&secret=ee11",
+		},
+	}}
+	c.Tick(context.Background())
+
+	if len(side.sentMeta) != 1 {
+		t.Fatalf("want 1 publish, got %d (%+v)", len(side.sentMeta), side.sentMeta)
+	}
+	cap := side.sentMeta[0].caption
+	if strings.Contains(cap, "Server: Unknown") {
+		t.Errorf("dead block must be replaced: %q", cap)
+	}
+	if !strings.Contains(cap, "[🔒 اتصال به پروکسی ۱](https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00)") ||
+		!strings.Contains(cap, "[🔒 اتصال به پروکسی ۲](https://t.me/webproxy?server=zov.example&secret=ee11)") {
+		t.Errorf("connect links missing: %q", cap)
+	}
+	if len(store.posts) != 1 || store.posts[0].Status != domain.ContentStatusPublished {
+		t.Errorf("posts = %+v", store.posts)
+	}
+}

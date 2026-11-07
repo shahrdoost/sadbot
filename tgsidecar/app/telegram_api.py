@@ -56,26 +56,27 @@ _PROXY_PORT_RE = re.compile(r"^\W*(?:port|پورت)\s*[:：]\s*(\d{1,5})\s*$", r
 _PROXY_SECRET_RE = re.compile(r"^\W*(?:secret|سکرت|رمز)\s*[:：]\s*([0-9A-Za-z+/_=-]{8,})\s*$", re.I)
 # line telling the user to paste the secret by hand — obsolete once we link it
 _PROXY_INSTR_RE = re.compile(r"در تنظیمات پروکسی تلگرام وارد کنید", re.I)
-def has_config_uri(text: str) -> bool:
-    return bool(_CONFIG_URI_RE.search(text))
 
+# any tappable proxy deep-link already present in the text (collector-injected
+# or source-carried); a bare t.me/proxy resolves to the @proxy profile
+_PROXY_LINK_ANY_RE = re.compile(r"(?:https?://t\.me/|tg://)(?:proxy|webproxy|socks)\?", re.I)
 
 _PROXY_LABEL = "🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن"
-_PROXY_FALLBACK = "🔒 اتصال به پروکسی"
 
 
 def _proxy_links(text: str) -> str:
     """Rewrite every Server/Port/Secret block into a tg://proxy markdown link.
 
     Runs before _copyable so the block's fields never survive as plain text to
-    be copied by hand. Existing tg://proxy links are left alone.
+    be copied by hand. Text already carrying a proxy link is left alone, and an
+    unusable host (placeholder like "Unknown") stays plain — a link without a
+    real server is dead weight (parameterless t.me/proxy opens @proxy).
     """
-    if not text or "tg://proxy" in text.lower():
+    if not text or _PROXY_LINK_ANY_RE.search(text):
         return text
     lines = text.split("\n")
     out: list[str] = []
     used = False
-    vague = False
     i = 0
     while i < len(lines):
         server = _PROXY_HOST_RE.match(lines[i])
@@ -100,20 +101,18 @@ def _proxy_links(text: str) -> str:
             j += 1
             if port and secret:
                 break
-        host = server.group(1)
+        # "http://host/path" or "host/path" — MTProto connects to the bare host
+        host = re.sub(r"^[a-z][a-z0-9+.-]*://", "", server.group(1), flags=re.I)
+        host = host.split("/")[0].split("?")[0]
         if port and secret and _hostish(host):
             out.append(f"[{_PROXY_LABEL}](https://t.me/proxy?server={host}&port={port}&secret={secret})")
             used = True
             i = j
             continue
-        vague = True
         out.append(lines[i])
         i += 1
-    plain = "\n".join(out)
     if used:
         out = [ln for ln in out if not _PROXY_INSTR_RE.search(ln)]
-    elif vague and not has_config_uri(plain):
-        out.append(f"\n[{_PROXY_FALLBACK}](https://t.me/proxy)")
     return "\n".join(out)
 
 
@@ -125,7 +124,7 @@ def _hostish(host: str) -> bool:
     )
 
 
-_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://t\.me/proxy[^)\s]*)\)")
+_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(((?:https?://t\.me/|tg://)(?:proxy|webproxy|socks)[^)\s]*)\)")
 
 
 def _copyable(text: str):

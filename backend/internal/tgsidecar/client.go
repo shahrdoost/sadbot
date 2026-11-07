@@ -77,13 +77,14 @@ type Media struct {
 }
 
 type Message struct {
-	ID         int     `json:"id"`
-	Date       *string `json:"date"`
-	Sender     Sender  `json:"sender"`
-	Text       string  `json:"text"`
-	Media      Media   `json:"media"`
-	ReplyToID  *int    `json:"reply_to_id"`
-	Forwarded  bool    `json:"forwarded"`
+	ID        int      `json:"id"`
+	Date      *string  `json:"date"`
+	Sender    Sender   `json:"sender"`
+	Text      string   `json:"text"`
+	Media     Media    `json:"media"`
+	ReplyToID *int     `json:"reply_to_id"`
+	Forwarded bool     `json:"forwarded"`
+	ProxyURLs []string `json:"proxy_urls"`
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {

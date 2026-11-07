@@ -305,6 +305,7 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 	if cleaned == "" && m.Media.Kind == "none" {
 		return
 	}
+	cleaned = attachProxyLinks(cleaned, m.ProxyURLs)
 	post.CleanedText = strPtr(cleaned)
 
 	caption := cleaned

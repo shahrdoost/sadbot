@@ -157,3 +157,85 @@ func stripForeignMentions(s, brandHandle string) string {
 	}
 	return strings.TrimSpace(blankRunRe.ReplaceAllString(strings.Join(out, "\n"), "\n\n"))
 }
+
+// Server/Port/Secret block lines — same shapes the sidecar's _proxy_links
+// recognizes (any label language, emoji/bullet prefixes).
+var (
+	proxyHostLineRe   = regexp.MustCompile(`(?i)^\W*(?:server|host|سرور|هاست)\s*[:：]\s*(\S+)\s*$`)
+	proxyPortLineRe   = regexp.MustCompile(`(?i)^\W*(?:port|پورت)\s*[:：]\s*(\d{1,5})\s*$`)
+	proxySecretLineRe = regexp.MustCompile(`(?i)^\W*(?:secret|سکرت|رمز)\s*[:：]\s*([0-9A-Za-z+/_=-]{8,})\s*$`)
+	proxyInstrRe      = regexp.MustCompile(`در تنظیمات پروکسی تلگرام وارد کنید`)
+)
+
+// attachProxyLinks turns the source message's proxy connect links (carried on
+// its URL buttons and link entities) into the post's own connect links. Sources
+// like @ProxyMTProto post "Server: Unknown" blocks and keep the real endpoints
+// on the buttons, so the block is replaced in place; without a block the links
+// are appended. Text without URLs is returned unchanged.
+func attachProxyLinks(text string, urls []string) string {
+	if len(urls) == 0 {
+		return text
+	}
+	links := make([]string, 0, len(urls))
+	for i, u := range urls {
+		label := "🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن"
+		if len(urls) > 1 {
+			label = "🔒 اتصال به پروکسی " + faDigits(i+1)
+		}
+		links = append(links, "["+label+"]("+u+")")
+	}
+	block := strings.Join(links, "\n")
+
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		if !proxyHostLineRe.MatchString(lines[i]) {
+			continue
+		}
+		// fields may be separated by blank lines or an emoji bullet
+		j, fielded := i+1, false
+		for j < len(lines) && j <= i+6 {
+			ln := lines[j]
+			if k := strings.LastIndex(ln, "•"); k >= 0 {
+				ln = ln[k+len("•"):]
+			}
+			if proxyPortLineRe.MatchString(ln) || proxySecretLineRe.MatchString(ln) {
+				fielded = true
+			} else if strings.TrimSpace(lines[j]) != "" {
+				break
+			}
+			j++
+		}
+		if !fielded {
+			continue
+		}
+		// don't swallow the paragraph shape around the block
+		for j > i && strings.TrimSpace(lines[j-1]) == "" {
+			j--
+		}
+		out := make([]string, 0, len(lines)+len(links))
+		out = append(out, lines[:i]...)
+		out = append(out, links...)
+		out = append(out, lines[j:]...)
+		// the "enter this secret in settings" line is obsolete once we link it
+		kept := make([]string, 0, len(out))
+		for _, ln := range out {
+			if proxyInstrRe.MatchString(ln) {
+				continue
+			}
+			kept = append(kept, ln)
+		}
+		return strings.Join(kept, "\n")
+	}
+
+	if strings.TrimSpace(text) == "" {
+		return block
+	}
+	return strings.TrimSpace(text) + "\n\n" + block
+}
+
+var faDigitReplacer = strings.NewReplacer(
+	"0", "۰", "1", "۱", "2", "۲", "3", "۳", "4", "۴",
+	"5", "۵", "6", "۶", "7", "۷", "8", "۸", "9", "۹",
+)
+
+func faDigits(n int) string { return faDigitReplacer.Replace(strconv.Itoa(n)) }
