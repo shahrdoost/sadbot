@@ -541,6 +541,28 @@ def test_proxy_links_in_text_leave_block_alone():
     assert "[🔒 اتصال]" not in body, "markdown link must render as entity, not text"
 
 
+def test_copyable_multi_link_offsets_land_on_labels():
+    from app.telegram_api import _copyable
+
+    labels = ["🔒 اتصال به پروکسی ۱", "🔒 اتصال به پروکسی ۲", "🔒 اتصال به پروکسی ۳"]
+    urls = [
+        "https://t.me/proxy?server=ccc.example&port=8443&secret=aa00",
+        "https://t.me/proxy?server=one.example&port=8443&secret=aa00",
+        "https://t.me/proxy?server=2.2.2.2&port=8443&secret=aa00",
+    ]
+    text = "🔒 پروکسی MTProto\n\n" + "\n".join(
+        f"[{lab}]({u})" for lab, u in zip(labels, urls)
+    ) + "\n\nفالو کنید: @mr_vpn_here"
+    body, ents = _copyable(text)
+
+    units = body.encode("utf-16-le")
+    got = []
+    for e in ents or []:
+        slice_ = units[e.offset * 2 : (e.offset + e.length) * 2].decode("utf-16-le", "ignore")
+        got.append((slice_, e.url))
+    assert got == list(zip(labels, urls)), f"entities must land on their labels: {got}"
+
+
 def test_serialize_message_extracts_proxy_urls():
     from types import SimpleNamespace
 
@@ -588,6 +610,41 @@ def test_serialize_message_extracts_proxy_urls():
         "https://t.me/proxy?server=9.9.9.9&port=443&secret=aa",
         "https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00",
     ], "proxy deep-links from entities and URL buttons only, order kept, no dupes"
+
+
+def test_serialize_message_reads_telethon_button_wrappers():
+    # real Telethon replies: msg.buttons wrappers carry .url; the raw TL
+    # KeyboardInlineButton does not
+    from types import SimpleNamespace
+
+    from app.schemas import serialize_message
+
+    raw_btn = SimpleNamespace(url=None)  # raw TL button: no .url field
+    wrapper = SimpleNamespace(url="https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00")
+    msg = SimpleNamespace(
+        id=8,
+        date=None,
+        sender=None,
+        out=False,
+        post_author=None,
+        message="Server: Unknown",
+        reply_to=None,
+        forward=None,
+        photo=None,
+        sticker=None,
+        voice=None,
+        video=None,
+        audio=None,
+        document=None,
+        media=None,
+        entities=None,
+        buttons=[[wrapper, SimpleNamespace(url=None)]],
+        reply_markup=SimpleNamespace(rows=[SimpleNamespace(buttons=[raw_btn])]),
+    )
+    info = serialize_message(msg)
+    assert info.proxy_urls == [
+        "https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00"
+    ], "MessageButton wrappers are the reliable URL source"
 
 
 def test_config_uri_untouched():

@@ -175,8 +175,16 @@ def message_proxy_urls(msg: Any, text: str) -> list[str]:
             add(url)
         elif isinstance(ent, MessageEntityUrl):
             add(_utf16_slice(text, ent.offset, ent.length))
-    markup = getattr(msg, "reply_markup", None)
-    for row in getattr(markup, "rows", None) or []:
-        for btn in getattr(row, "buttons", None) or []:
-            add(getattr(btn, "url", None))
+    # URL buttons — Telethon's MessageButton wrappers expose .url; raw TL
+    # button types vary by layer (KeyboardInlineButton has no .url field)
+    rows = getattr(msg, "buttons", None)
+    if rows:
+        for row in rows:
+            for btn in row:
+                add(getattr(btn, "url", None))
+    else:
+        markup = getattr(msg, "reply_markup", None)
+        for row in getattr(markup, "rows", None) or []:
+            for btn in getattr(row, "buttons", None) or []:
+                add(getattr(btn, "url", None))
     return found

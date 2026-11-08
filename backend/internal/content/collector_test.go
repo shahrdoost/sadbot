@@ -757,3 +757,48 @@ func TestCollectorTextOnlyInjectsProxyLinks(t *testing.T) {
 		t.Errorf("posts = %+v", store.posts)
 	}
 }
+
+func TestCollectorButtonOnlySurvivesNoContentDrop(t *testing.T) {
+	// the model may discard a "Server: Unknown" text block as junk; when the
+	// real endpoints ride on URL buttons the post must still ship as links
+	c, store, side, l, _, _, _ := newTestCollector(t)
+	c.SetPublisherViaMeta(func(_ context.Context, _ uuid.UUID, _, channel, caption string, photos [][]byte, _ string) error {
+		side.sentMeta = append(side.sentMeta, publishCall{channel: channel, caption: caption, numPngs: len(photos)})
+		return nil
+	})
+	c.SetPricesFunc(func(uuid.UUID) map[string]any {
+		return map[string]any{
+			"content_account_id":  "acc1",
+			"content_channel":     "@mr_vpn_here",
+			"content_folder":      "Crypto",
+			"content_publish_via": "sidecar",
+			"content_text_only":   true,
+			"content_min_length":  10,
+			"brand_handle":        "@mr_vpn_here",
+		}
+	})
+	l.replies = []string{"NO_CONTENT"}
+	side.messages["-100111"] = []tgsidecar.Message{{
+		ID:   31,
+		Text: "Server: Unknown\nPort: 7443\nSecret: AAAAAAAAAAAAAAAAAAAAABQ=",
+		ProxyURLs: []string{
+			"https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00",
+			"https://t.me/proxy?server=5.6.7.8&port=443&secret=dd00",
+		},
+	}}
+	c.Tick(context.Background())
+
+	if len(side.sentMeta) != 1 {
+		t.Fatalf("want 1 publish, got %d (%+v)", len(side.sentMeta), side.sentMeta)
+	}
+	cap := side.sentMeta[0].caption
+	if !strings.Contains(cap, "[🔒 اتصال به پروکسی ۱](https://t.me/proxy?server=1.2.3.4&port=443&secret=dd00)") {
+		t.Errorf("connect links missing: %q", cap)
+	}
+	if strings.Contains(cap, "Secret: AAAA") {
+		t.Errorf("dead block must not leak: %q", cap)
+	}
+	if len(store.posts) != 1 || store.posts[0].Status != domain.ContentStatusPublished {
+		t.Errorf("posts = %+v", store.posts)
+	}
+}

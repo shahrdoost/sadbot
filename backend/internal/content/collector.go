@@ -290,19 +290,24 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 	if raw != "" {
 		out, drop := c.aiClean(ctx, botID, raw, prices)
 		if drop {
-			post.Status = domain.ContentStatusNoContent
-			_ = c.store.InsertPost(ctx, post)
-			return
+			// button-only posts survive a model drop: the links are the content
+			if len(m.ProxyURLs) == 0 {
+				post.Status = domain.ContentStatusNoContent
+				_ = c.store.InsertPost(ctx, post)
+				return
+			}
+			cleaned = ""
+		} else {
+			cleaned = out
 		}
-		cleaned = out
 	}
 	cleaned = stripSourceCredits(cleaned)
-	if cleaned == "" && m.Media.Kind == "none" {
+	if cleaned == "" && m.Media.Kind == "none" && len(m.ProxyURLs) == 0 {
 		return // nothing to publish
 	}
 	brand := brandOf(prices)
 	cleaned = stripForeignMentions(cleaned, brand.Handle)
-	if cleaned == "" && m.Media.Kind == "none" {
+	if cleaned == "" && m.Media.Kind == "none" && len(m.ProxyURLs) == 0 {
 		return
 	}
 	cleaned = attachProxyLinks(cleaned, m.ProxyURLs)

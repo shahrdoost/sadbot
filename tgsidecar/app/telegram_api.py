@@ -140,14 +140,18 @@ def _copyable(text: str):
     text = _proxy_links(text)
     cleaned = text.replace("```", "").replace("`", "")
     entities = []
+    # offsets must be computed on the post-substitution text: each
+    # [label](url) collapses to label, shifting every later entity left
+    dropped = 0
     for m in _MD_LINK_RE.finditer(cleaned):
         entities.append(
             MessageEntityTextUrl(
-                offset=_utf16_len(cleaned[: m.start()]),
+                offset=_utf16_len(cleaned[: m.start()]) - dropped,
                 length=_utf16_len(m.group(1)),
                 url=m.group(2),
             )
         )
+        dropped += _utf16_len(m.group(0)) - _utf16_len(m.group(1))
     cleaned = _MD_LINK_RE.sub(lambda m: m.group(1), cleaned)
     for m in _CONFIG_URI_RE.finditer(cleaned):
         uri = m.group(0).rstrip(_URI_TRAIL)
