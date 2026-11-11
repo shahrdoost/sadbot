@@ -71,7 +71,7 @@ func (f *fakeSidecar) GetPhoto(_ context.Context, _, _ string, _ int) (io.ReadCl
 }
 
 // SendPhotoMeta is only wired in sidecar-publish tests; each call here is one
-// photo (the collector sends post+story sequentially).
+// photo (the collector ships exactly one post card).
 func (f *fakeSidecar) SendPhotoMeta(_ context.Context, _, chatID, _, _, caption string) (*tgsidecar.Message, error) {
 	f.sentMeta = append(f.sentMeta, publishCall{channel: chatID, caption: caption, numPngs: 1})
 	return &tgsidecar.Message{ID: 99}, nil
@@ -185,11 +185,11 @@ func TestCollectorHappyPathPublishesRenderedCards(t *testing.T) {
 	if call.channel != "@Crypto-Content" {
 		t.Errorf("channel = %q", call.channel)
 	}
-	if call.numPngs != 2 { // post + story
-		t.Errorf("want 2 pngs, got %d", call.numPngs)
+	if call.numPngs != 1 { // one post card per post (no story duplicate)
+		t.Errorf("want 1 png, got %d", call.numPngs)
 	}
-	if len(r.calls) != 2 {
-		t.Errorf("want 2 render calls, got %d", len(r.calls))
+	if len(r.calls) != 1 {
+		t.Errorf("want 1 render call, got %d", len(r.calls))
 	}
 	// caption = cleaned text (from LLM), card = summary (LLM second call returns default)
 	if call.caption == "" {
@@ -498,8 +498,8 @@ func TestCollectorSidecarPublishViaAccount(t *testing.T) {
 	if len(p.calls) != 0 {
 		t.Fatalf("bot publisher must not be called on sidecar path, got %d", len(p.calls))
 	}
-	if len(side.sentMeta) != 2 { // post + story
-		t.Fatalf("want 2 SendPhotoMeta calls, got %d (%+v)", len(side.sentMeta), side.sentMeta)
+	if len(side.sentMeta) != 1 { // one post card per post (no story duplicate)
+		t.Fatalf("want 1 SendPhotoMeta call, got %d (%+v)", len(side.sentMeta), side.sentMeta)
 	}
 	for _, call := range side.sentMeta {
 		if call.channel != "@Crypto-Content" {

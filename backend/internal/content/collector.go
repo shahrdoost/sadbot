@@ -384,20 +384,20 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 		}
 	}
 
-	// render post + story
+	// render the post card only — the channel gets one message per post
+	// (user: «همون یکبار فقط همون پست رو بزار»; the story format shipped as a
+	// second identical-caption message and just duplicated the post)
 	var pngs [][]byte
 	renderErr := error(nil)
 	if c.renderer != nil && cardText != "" {
-		for _, fmtName := range []string{"post", "story"} {
-			png, err := c.renderer.Render(ctx, RenderRequest{
-				Fmt: fmtName, Text: cardText,
-				ImageB64: imageB64, ImageMime: imageMime,
-				Brand: brand,
-			})
-			if err != nil {
-				renderErr = err
-				break
-			}
+		png, err := c.renderer.Render(ctx, RenderRequest{
+			Fmt: "post", Text: cardText,
+			ImageB64: imageB64, ImageMime: imageMime,
+			Brand: brand,
+		})
+		if err != nil {
+			renderErr = err
+		} else {
 			pngs = append(pngs, png)
 		}
 	}
