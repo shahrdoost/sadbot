@@ -50,6 +50,8 @@
 
 تست: `nav_matrix_test.go` (`TestHomeNavFromEveryScene`, `TestHomeNavFromInlineOnlyScenes`, `TestHomeMenuColoredButtons`, `TestHomeNavFromAdvSearchWizard`, `TestHomeNavFromEditPrompts` — دومی قفل‌کنندهٔ باگ rename-با-لیبل است).
 
+**فرار چت + منوی ☰ کت (۲۰۲۶-۱۱-۱۱):** کیبورد صحنهٔ چت (`chatRows`) حالا «🏠 منوی اصلی» دارد (مثل `ratingRows`) — زدن آن چت را مثل «🛑 قطع مکالمه» تمام و به ریتینگ می‌برد و **هرگز به مخاطب رله نمی‌شود** (`handleChat` می‌گیردش). ریشه: روی کت فقط همان دو دکمهٔ چت دیده می‌شد و راهی به منوی اصلی نبود («فریز»). لیبل‌های منو از `setMyCommands` (۱۲ فرمان، ثبت در startPlatform) و `resolveCommand` (`/cmd@bot` → لیبل home) هم کار میکنند؛ scope فرمان در کت پشتیبانی نمیشود (`BOT_COMMAND_SCOPE_UNSUPPORTED`) — لیست فقط global است.
+
 ## ماشین وضعیت
 
 state در `bot_end_users.state` (JSONB): `scene` + `step` + `data`.
@@ -58,7 +60,7 @@ state در `bot_end_users.state` (JSONB): `scene` + `step` + `data`.
 /setup: setname → setage → setprovince → setcity → setgender → (عکس اختیاری) → home
 /home: وصلم کن → زیرمنو → غریبه/دختر/پسر → search (صف + هزینه)
 /search: مچ → chat | ❌ لغو (بازگشت هزینه) | timeout (بازگشت هزینه)
-/chat: 🛑 قطع / 🚫 بلاک / پیام ناموفق → rating → ⭐..⭐⭐⭐⭐⭐ → home
+/chat: 🛑 قطع / 🚫 بلاک / 🏠 منوی اصلی / پیام ناموفق → rating → ⭐..⭐⭐⭐⭐⭐ → home
 /home: مرور پروفایل‌ها → browse (دکه inline: لایک/سوپرلایک/چت مستقیم/بعدی)
         مچ دوطرفه (لایک متقابل یا سوپرلایک یا چت مستقیم) → chat
 /home: جستجوی ویژه/کاربران → ویزارد فیلتر (browse mode: جنسیت/استان/شهر/سن/علایق) → browse فیلترشده
@@ -99,20 +101,21 @@ state در `bot_end_users.state` (JSONB): `scene` + `step` + `data`.
 ## Browse (سبک Tinder)
 
 - **کارت** (۲۰۲۶-۱۰-۱۸ بازطراحی شد، عین kpkchat): کپشن فشرده — `💕 نام 👩` / `🎂 سن ساله` / `📍 شهر، استان` / `⭐ امتیاز` / `🎯 علایق · جداشده` (سقف ۵) / خط پایانی سکه (رایگان باقی‌مانده / هزینه / پریموم). عکس با `SendPhotoKBD`، وگرنه متن؛ دکمه‌ها: لایک (سقف رایگان روزانه `browse_free_likes` بعد `browse_like_cost`)، سوپرلایک (`superlike_cost` + سقف روزانه + نوتیفیکیشن ویژه)، چت مستقیم (`direct_chat_cost`؛ مشترکین رایگان)، بعدی، منوی اصلی.
-- **بستن کارت هنگام خروج** (۲۰۲۶-۱۰-۱۸ رفع باگ): شناسهٔ پیام کارت در state ذخیره میشود (`browse_card_msg` + `browse_card_photo`) چون خروج با کیبورد reply به‌صورت *پیام متنی* می‌رسد و MsgID آن به پیام کاربر اشاره دارد نه کارت. `finishCard` در همهٔ مسیرهای خروج صدا زده میشود — دکمهٔ inline «منوی اصلی»، گارد لیبل‌های home، متن تایپشده (قبل از کارت بعدی) و connect — و کارت را بدون دکمه ویرایش میکند. کارت عکس‌دار با `editMessageCaption` (اختیاری `engine.CaptionEditor` در sender) بسته میشود چون `editMessageText` روی رسانه رد میشود.
+- **جایگزینی صفحه‌ها (replace-view)**: dating با `ReplaceViews()` روی قابلیت engine روشن است — هر صفحه (کیبورد/کارت) پیامِ قبلی را **فقط بعد از فرودِ جایگزین** حذف میکند (send-then-delete)؛ اگر ارسال جدید خطا بدهد صفحهٔ قبلی سر جایش میماند («پیام پاک میشه و هیچی نمیاد» رفع شد). کارت browse هم با همان viewDrop جایگزین میشود (`browse_card_msg` در state؛ حذف اضافهٔ کارت legacy فقط بعد از فرود کارت بعدی). `keepCardNote` کارت را به اعلان تبدیل و از tracking خارج میکند (پیام میماند).
+- **fallback عکس کارت**: عکس پروفایل با file_id همان پلتفرم ارسال میشود؛ file_id تلگرام روی کت (`FILE_ID_INVALID`) یا هر خطای دیگری → کارت **متنی** جایگزین میشود — هرگز چت خالی نمیماند (`TestPhotoFailureFallsBackToTextCard`).
 - لایک/سوپرلایک متقابل → connect؛ رد (`kind=pass`) تا تکرار کارت ثبت میشود.
 - **مرور فیلترشده** («جستجوی ویژه/کاربران»): `BrowseCandidatesFiltered` با جنسیت/استان/شهر/سن/علایق از ویزارد؛ رایگان؛ فیلترها با خروج/خالی شدن دکه پاک میشوند.
 
 ## اقتصاد سکه
 
 - کیف پول (`💰 سکه`): موجودی + روشهای کسب + پکیج‌ها (درگاه catroom.ir سازگار Zibal؛ `PAYMENT_DEV_MODE` برای تست فوری) + اشتراک ۳۰ روزه.
-- ماموریت‌ها (`🎁 ماموریت‌ها`): عضویت کانال(ها) با تایید سروری (`+bonus`) — چندکاناله از `prices.channels`؛ لینک دعوت (`+bonus` دوطرفه).
+- ماموریت‌ها (`🎁 ماموریت‌ها`): عضویت کانال(ها) با تایید سروری (`+bonus`) — چندکاناله از `prices.channels`؛ لینک دعوت (`+bonus` دوطرفه). **لینک کانال per-platform است** (`channelLinkFor`: روی کت `t.me/X` → `https://cr0.ir/X`، تلگرام دست‌نخورده). **روی کت استعلام عضویت انجام نمیشود** (`getChatMember` METHOD_NOT_FOUND) — زدن «✅ بررسی عضویت کانال» عضویت را قبول و پاداش را میدهد؛ تلگرام استعلام واقعی دارد (`TestChannelMissionKatTrustsTap`).
 - سوییپر پرداخت: auto-verify هر ۱ دقیقه (۱۰ دقیقه اول) + انقضای pending بعد از آن (**فقط یک بار** اطلاع‌رسانی — رفع باگ اسپم «مهلت پرداخت تمام شد»)؛ انقضای اشتراک هر ۶ ساعت.
 - تخفیف (`discount_codes`) و بوست پروفایل (`growth.go`).
 
 ## پروفایل من (پورت «حساب من» kpkchat)
 
-صفحهٔ inline غنی (نام/جنسیت/سن/استان/شهر/علایق/امتیاز/عکس/سکه/اشتراک) + ۶ ویرایش: نام (هزینه + کول‌داون)، سن/جنسیت/مکان/عکس (`edit_cost` + کول‌داون هفتگی مشترک؛ اولین تغییر هر فیلد رایگان)، علاقه‌مندی‌ها (رایگان، حداکثر ۵ تا از ۱۵ گزینه). prompt عکس با گارد home فرار میکند بدون ثبت کول‌داون.
+صفحهٔ inline غنی (نام/جنسیت/سن/استان/شهر/علایق/امتیاز/عکس/سکه/اشتراک) + ۶ ویرایش: نام (هزینه + کول‌داون)، سن/جنسیت/مکان/عکس (`edit_cost` + کول‌داون هفتگی مشترک؛ اولین تغییر هر فیلد رایگان)، علاقه‌مندی‌ها (رایگان، حداکثر ۵ تا از ۱۵ گزینه). prompt عکس با گارد home فرار میکند بدون ثبت کول‌داون. **حذف حساب**: ۳ سکه + soft-deactivate (`dating_profiles.deactivated_at` — migration 0014)؛ کاربر غیرفعال از دکهٔ مرور و مچ حذف میشود.
 
 ## اعتراف و پشتیبانی
 
@@ -139,6 +142,7 @@ quota رایگان (`ai_free_messages`) بعد هر پیام `ai_message_cost` (
 - `profile_edit_test.go` — صفحه و ۶ ویرایش + کول‌داون.
 - `economy_test.go` / `discount_flow_test.go` / `growth_test.go` / `ai_gate_test.go` / `adminops_test.go`.
 - `internal/payment/expiry_test.go` — انقضای پرداخت دقیقاً یک بار (رفع اسپم).
+- **قفل‌های replace-view / کت (۲۰۲۶-۱۱-۱۱)**: `TestReplaceViewNavigation`، `TestFailedSendKeepsPreviousView` (ارسال ناموفق صفحه را پاک نکند)، `TestPhotoFailureFallsBackToTextCard`، `TestBrowseAdvanceKeepsCardOnSendFailure`، `TestChatHomeButtonLeavesChat` (دکمهٔ خروج چت رله نشود)، `TestRatingViaKatCallback` (ستاره به‌صورت callback کت)، `TestChannelLinkPerPlatform`، `TestChannelMissionKatTrustsTap`.
 
 ```bash
 cd backend

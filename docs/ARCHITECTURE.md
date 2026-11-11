@@ -107,12 +107,15 @@ type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/ت�
 
 `Reply`/`ReplyKBD`/`ReplyKBDStyled`/`ReplyInline`/`SendPhotoKBD`/`SendTo`/`ForwardMediaTo`/`RecordInbound`/`State`/`Data`/`Prices`/`MsgID`
 
+- **replace-view** (opt-in با `ViewReplaceable.ReplaceViews()` → `BotContext.AutoView`): صفحه‌های کیبورد/کارت یکدیگر را جایگزین میکنند — **send-then-delete** (پیام قبلی فقط بعد از فرودِ جایگزین حذف میشود؛ ارسال ناموفق = صفحهٔ قبلی میماند). tracking با `view_msg` در state؛ `UntrackView` برای پیام‌هایی که باید بمانند. `SendPhotoKBD` روی خطا به پیام متنی fallback میکند.
+- **دکمهٔ URL**: `engine.InlineButton{Label, Callback, URL}` — دکمه با `URL` بدون callback کار میکند (مثل لینک پرداخت).
+
 ## سیستم پرداخت یکپارچه
 
 **همهٔ بات‌ها** از یک `payment.Service` استفاده می‌کنند:
 
 ```
-خرید پکیج → payment.BuyPackage → درگاه catroom.ir → callback → payment.Complete
+خرید پکیج → payment.BuyPackage → درگاه catroom.ir → هوک سرور-به-سرور/Sweeper → payment.Complete
                                                               ↓
                                                      GameCreditor.AddCoins(botID, userID, n)
                                                               ↓

@@ -1,6 +1,6 @@
 # اسکیمای دیتابیس
 
-> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0013_kat_platform`
+> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0014_dating_deactivated`
 > قواعد کلی:
 > - پول: `BIGINT` (هرگز float)؛ نمایش تومان در UI (÷۱۰).
 > - هر سطر bot-scoped دارای `bot_id UUID` با FK به `bots` (`ON DELETE CASCADE`).
@@ -206,6 +206,7 @@ audit_logs
 | 0011 | game_templates | bombland_players، bombland_referrals، duel_players، duel_withdrawals، duel_pools |
 | 0012 | more_bots | favaani_*، shlinks_*، whoseeme_*، faal_*، anonychat_*، tapearn_* |
 | 0013 | kat_platform | پلتفرم کت (cr0.ir): `bots.kat_token_encrypted/kat_username`، `platform` روی `bot_end_users` و `dating_profiles`، UNIQUE سه‌تایی هویت |
+| 0014 | dating_deactivated | `dating_profiles.deactivated_at` — حذف نرم (۳ سکه)؛ کاربر غیرفعال از دکهٔ مرور/مچ حذف میشود (auto-applied at boot) |
 
 ## الگوهای اتمیک
 

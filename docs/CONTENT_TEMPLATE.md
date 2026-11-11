@@ -18,7 +18,7 @@ Collector (گوروتین سراسری داخل backend)
   ├─ tgsidecar GET /messages ──▶ پیام‌های جدید (dedup با content_posts)
   ├─ llm.Chat(clean_prompt) ──▶ متن تمیز (NO_CONTENT = حذف؛ خطا = متن خام)
   ├─ llm.Chat(card_prompt)  ──▶ خلاصهٔ کارت (اختیاری)
-  ├─ renderer POST /render  ──▶ post.png + story.png
+  ├─ renderer POST /render  ──▶ post.png (فقط فرمت پست — یک تصویر، یک ارسال)
   └─ SendPhotoUpload ──▶ کانال مقصد (کپشن = متن کامل[:1000]) + ثبت content_posts
 ```
 
@@ -92,7 +92,9 @@ Collector (گوروتین سراسری داخل backend)
 - **AI clean**: گارد <۳۰ کاراکتر (به مدل نمی‌رود — همان متن منتشر می‌شود)؛ NO_CONTENT = حذف کامل + رکورد `no_content`؛ جواب مکالمه‌ای (لطفاً/ارسال کنید/متنی که/بفرمایید) = حذف؛ خروجی <۲۰ کاراکتر = حذف؛ **خطای LLM = متن خام منتشر می‌شود**
 - **خلاصهٔ کارت**: گارد <۴۰ کاراکتر؛ خطا/جواب مکالمه‌ای → متن کامل داخل کارت؛ کپشن = همیشه متن کامل[:1000]
 - **عکس منبع**: فقط photo (sidecar GetPhoto → JPEG)؛ به‌صورت data-URI داخل کارت
-- **رندر**: post (1080×1080) + story (1080×1920) با فونت Vazirmatn و هایلایت اعداد accent برند؛ **خطای رندر = ارسال متن خام** (رکورد `render_failed`)
+- **بدون لینک**: هیچ لینک وبی در پست منتشر نمی‌شود (قاعدهٔ صریح: «هیچ لینکی نباید باشه») — `stripForeignMentions` حالا علاوه بر `t.me` و منشن‌های غریبه، همهٔ `http(s)://`، دامنه‌های بدون پیشوند (`instagram.com/x`) و هدف لینک‌های markdown (فقط label می‌ماند) را حذف می‌کند. **مستثناها**: URIهای کانفیگ VPN (`vless://` و…) و لینک‌های اتصال پروکسی (بعد از strip با `attachProxyLinks` دوباره می‌چسبند) — فقط برند/هشتگ‌ها و تبلیغ کانال خودِ بات می‌ماند
+- **گیت آگهی (deterministic)**: `looksLikePromo` با نشانه‌های `promoMarkers` (شرط‌بندی/قمار، ad-slot انگلیسی، «جایگاه تبلیغ» و…) **بالای همهٔ مسیرهای انتشار** (کارت و متن) — حتی اگر مدل AI نگه‌شان داشته باشد، هرگز منتشر نمی‌شوند
+- **رندر**: فقط post (1080×1080 — فرمت پست اینستاگرام) با فونت Vazirmatn و هایلایت اعداد accent برند؛ نسخهٔ story (1080×1920) دیگر ساخته نمی‌شود — هر پست دقیقاً یک تصویر و یک پیام در کانال (قبلاً post+story با کپشن تکراری دو بار می‌رفت)؛ **خطای رندر = ارسال متن خام** (رکورد `render_failed`)
 - **پیام رسانه‌ای بدون متن**: رد می‌شود (عین sadcontent — فقط-عکس بدون متن با min_length حذف می‌شود)
 - **فاصله**: ۱.۵s بین پردازش پیام‌ها، ۱s بین آپلود کارت‌ها
 - **dedup**: جدول `content_posts` UNIQUE(bot_id, source_chat_id, message_id) — منبع حقیقت ماندگار (به‌جای collected.jsonl)
@@ -129,4 +131,4 @@ cd backend
 go test ./internal/content/    # unit با fake های sidecar/llm/renderer/publisher
 ```
 
-پوشش: مسیر خوش‌مسیر (۲ PNG + رکورد published)، حذف کانال مقصد، NO_CONTENT، fallback خطای LLM، جواب مکالمه‌ای، fallback خطا/عدم‌دسترسی رندر، dedup، backfill limit، fail-closed فولدر، فیلترها (min_length/forwarded/keywords)، guard های AI، brand/link parsing، poll interval.
+پوشش: مسیر خوش‌مسیر (۱ PNG + رکورد published)، حذف کانال مقصد، NO_CONTENT، fallback خطای LLM، جواب مکالمه‌ای، fallback خطا/عدم‌دسترسی رندر، dedup، backfill limit، fail-closed فولدر، فیلترها (min_length/forwarded/keywords)، guard های AI، brand/link parsing، گیت آگهی (متن‌های گزارش‌شده و موارد منفی)، حذف لینک‌های وب (`TestStripForeignMentionsDropsWebLinks`)، بقا لینک پروکسی/کانفیگ، poll interval.

@@ -67,7 +67,8 @@
 
 | مسیر | دسترسی | توضیح |
 |---|---|---|
-| `GET /payments/callback` | **عمومی** | callback درگاه catroom.ir |
+| `GET /payments/callback` | **عمومی** | callback درگاه catroom.ir (hit سروری — خریدار دیگر به اینجا ریدایرکت نمیشود) |
+| `POST /payments/gateway-hook` | **عمومی** | هوک سرور-به-سرور درگاه (`{orderId, status}`) — تسویه را wake میکند؛ payload باور نمیشود، وضعیت دوباره استعلام میشود |
 
 ## Content (بات محتوا)
 

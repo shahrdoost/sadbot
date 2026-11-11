@@ -11,9 +11,9 @@
                               ↓
                     کاربر → درگاه → پرداخت
                               ↓
-                    GET /payments/callback (عمومی)
+        POST /payments/gateway-hook (سرور-به-سرور) / Sweeper
                               ↓
-                    payment.Verify → CAS status=pending→verified
+                    payment.Complete → CAS status=pending→verified
                               ↓
                     GameCreditor.AddCoins(botID, userID, coins)
                               ↓
@@ -21,6 +21,8 @@
               ↓               ↓               ↓
         bombland: money  duel: energy   dating: coins
 ```
+
+> **خریدار هرگز میزبانِ پنل (`sadbot.tfess.co.ir`) را نمی‌بیند.** صفحهٔ نتیجهٔ درگاه (catroom.ir) دکمهٔ «بازگشت به برنامه» ندارد و ریدایرکت پس از تسویه فقط برای callerهای زیرِ `catroom.ir` انجام می‌شود؛ برای صدبات، نتیجه از راه هوک سرور-به-سرور + sweeper اعلام و در چت بات ارسال می‌شود. `GET /payments/callback` فقط برای hit سروری باقی است.
 
 ## اجزا
 
@@ -94,16 +96,21 @@ bc.ReplyInline("💰 برای خرید کلیک کن:", [][]engine.InlineButton{
 })
 ```
 
-## Callback
+**قاعدهٔ پیام لینک پرداخت (همهٔ قالب‌ها):** لینکِ خام در متن پیام نمی‌آید — فقط دکمهٔ **«💳 پرداخت»** (URL-button خودِ لینک؛ `engine.InlineButton.URL`) + دکمهٔ بازگشت به منو. دکمهٔ «✅ بررسی پرداخت» حذف شده (جای آن را هوک + sweeper می‌گیرند). در dating متن هشدار VPN هم به «روی دکمه بزن» تغییر کرده (لینکی برای کپی نیست). پشتیبانی URL-button روی کت (cr0.ir) تأیید شده.
+
+## Callback و هوک
 
 ```
-GET /api/v1/payments/callback?trackId=...&status=...
+GET  /api/v1/payments/callback?trackId=...&status=...   (hit سروری — خریدار اینجا نمی‌آید)
+POST /api/v1/payments/gateway-hook  {orderId, status}   (سرور-به-سرور از درگاه)
 ```
 
 - **عمومی** (بدون JWT)
-- تایید سمت سرور (هرگز به client اعتماد نمی‌کند)
+- تایید سمت سرور (هرگز به client/هوک اعتماد نمی‌کند — وضعیت دوباره از درگاه استعلام می‌شود)
 - **CAS**: `UPDATE payments SET status='verified' WHERE id=$1 AND status='pending'`
 - سپس `GameCreditor.AddCoins`
+- هوک گیرنده فقط wake-up است؛ `verified` دوباره `Complete` می‌شود و `failed` فقط وقتی خودِ درگاه هم failed باشد (ضد spoof)
+- اندپوینت callback قدیمی برای سازگاری مانده؛ تسویهٔ خریداران از طریق هوک + sweeper انجام می‌شود
 
 ## ساختار پکیج (در prices)
 
