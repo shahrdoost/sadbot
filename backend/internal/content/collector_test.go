@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -921,5 +922,61 @@ func TestStripForeignMentionsDropsWebLinks(t *testing.T) {
 	uri := stripForeignMentions("کانفیگ:\nvless://uuid@host:443?type=tcp", "@brand")
 	if !strings.Contains(uri, "vless://uuid@host:443?type=tcp") {
 		t.Fatalf("config URI must survive: %q", uri)
+	}
+}
+
+// TestBrandLineOnEveryPost: every published post — card or text fallback —
+// carries the brand promo line («@handle ✅ آپدیت‌های روز را دنبال کنید»).
+func TestBrandLineOnEveryPost(t *testing.T) {
+	c, _, _, l, _, p, botID := newTestCollector(t)
+	c.SetPricesFunc(func(id uuid.UUID) map[string]any {
+		if id != botID {
+			return map[string]any{}
+		}
+		return map[string]any{
+			"content_account_id":  "acc1",
+			"content_channel":     "@Crypto-Content",
+			"content_folder":      "Crypto",
+			"content_min_length":  40,
+			"render_card_summary": true,
+			"brand_key":           "trader",
+			"brand_handle":        "@mr_trader_here",
+		}
+	})
+	l.replies = []string{longPersianNews()}
+	c.Tick(context.Background())
+	if len(p.calls) != 1 {
+		t.Fatalf("want 1 publish, got %d", len(p.calls))
+	}
+	if !strings.Contains(p.calls[0].caption, "@mr_trader_here") ||
+		!strings.Contains(p.calls[0].caption, "آپدیت‌های روز را دنبال کنید") {
+		t.Fatalf("brand line missing from card caption: %q", p.calls[0].caption)
+	}
+
+	// render failure → text fallback must carry the line too
+	c2, _, side2, l2, r2, p2, botID2 := newTestCollector(t)
+	c2.SetPricesFunc(func(id uuid.UUID) map[string]any {
+		if id != botID2 {
+			return map[string]any{}
+		}
+		return map[string]any{
+			"content_account_id":  "acc1",
+			"content_channel":     "@Crypto-Content",
+			"content_folder":      "Crypto",
+			"content_min_length":  40,
+			"render_card_summary": true,
+			"brand_key":           "trader",
+			"brand_handle":        "@mr_trader_here",
+		}
+	})
+	l2.replies = []string{longPersianNews()}
+	r2.err = errors.New("renderer down")
+	side2.messages["-100111"] = []tgsidecar.Message{{ID: 20, Text: longPersianNews()}}
+	c2.Tick(context.Background())
+	if len(p2.calls) != 1 {
+		t.Fatalf("fallback publish count = %d", len(p2.calls))
+	}
+	if !strings.Contains(p2.calls[0].caption, "@mr_trader_here") {
+		t.Fatalf("brand line missing from fallback caption: %q", p2.calls[0].caption)
 	}
 }

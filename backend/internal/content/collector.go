@@ -311,6 +311,10 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 		return
 	}
 	cleaned = attachProxyLinks(cleaned, m.ProxyURLs)
+	// the brand promo line rides on every post — both the card caption and
+	// the text-only path read from CleanedText (append BEFORE the caption
+	// trim so a long post can't push it off the end)
+	cleaned = appendBrandLine(cleaned, brand.Handle)
 	post.CleanedText = strPtr(cleaned)
 
 	// deterministic ad gate (every publish path): contests, VIP notices,
@@ -344,14 +348,6 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 		text := cleaned
 		if len(text) > 4000 {
 			text = text[:4000]
-		}
-		// text posts allow 4096 chars — append the brand handle AFTER the
-		// trim so config blocks can't push the ad line off the end
-		if h := brand.Handle; h != "" && !strings.Contains(text, h) {
-			if text != "" {
-				text += "\n\n"
-			}
-			text += h + " ✅ آپدیت‌های روز را دنبال کنید"
 		}
 		if text == "" {
 			return
@@ -532,6 +528,18 @@ func passesFilter(m tgsidecar.Message, text string, prices map[string]any) bool 
 		}
 	}
 	return true
+}
+
+// appendBrandLine adds the brand promo line to a post (idempotent: a post
+// that already carries the handle is left alone).
+func appendBrandLine(text, handle string) string {
+	if handle == "" || strings.Contains(text, handle) {
+		return text
+	}
+	if text != "" {
+		text += "\n\n"
+	}
+	return text + handle + " ✅ آپدیت‌های روز را دنبال کنید"
 }
 
 func brandOf(prices map[string]any) Brand {
