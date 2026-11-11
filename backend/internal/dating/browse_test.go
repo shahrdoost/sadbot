@@ -62,6 +62,9 @@ func TestBrowseCaption_ShowsDynamicCost(t *testing.T) {
 	if !strings.Contains(cap0, "رایگان") || !strings.Contains(cap0, "سارا") {
 		t.Fatalf("free caption = %q", cap0)
 	}
+	if strings.Contains(cap0, "💕") {
+		t.Fatalf("name line must not carry the heart: %q", cap0)
+	}
 	capPaid := browseCaption(&p, 1, 0, false)
 	if !strings.Contains(capPaid, "1 سکه") {
 		t.Fatalf("paid caption = %q", capPaid)
@@ -69,6 +72,31 @@ func TestBrowseCaption_ShowsDynamicCost(t *testing.T) {
 	capSub := browseCaption(&p, 1, 0, true)
 	if !strings.Contains(capSub, "پریموم") {
 		t.Fatalf("sub caption = %q", capSub)
+	}
+}
+
+func TestBrowseCaption_GenderLineUnderAge(t *testing.T) {
+	name, age, city := "sara", 18, "ارومیه"
+	gender := "female"
+	p := domain.DatingProfile{Name: &name, Age: &age, City: &city, Gender: &gender}
+	cap := browseCaption(&p, 0, 6, false)
+	lines := strings.Split(cap, "\n")
+	var nameIdx, ageIdx, genderIdx = -1, -1, -1
+	for i, ln := range lines {
+		switch {
+		case ln == name:
+			nameIdx = i
+		case strings.HasPrefix(ln, "🎂"):
+			ageIdx = i
+		case strings.Contains(ln, "خانم"):
+			genderIdx = i
+		}
+	}
+	if nameIdx < 0 || lines[nameIdx] != "sara" {
+		t.Fatalf("name line must be bare name, got %q", cap)
+	}
+	if genderIdx != ageIdx+1 {
+		t.Fatalf("gender line must sit right under the age line: %q", cap)
 	}
 }
 

@@ -148,7 +148,7 @@ func (r *PaymentRepo) LatestPendingForUser(ctx context.Context, botID uuid.UUID,
 func (r *PaymentRepo) MarkVerified(ctx context.Context, id uuid.UUID) (bool, error) {
 	tag, err := r.db.Exec(ctx, `
 		UPDATE payments SET status = 'verified', verified_at = now()
-		WHERE id = $1 AND status = 'pending'`, id)
+		WHERE id = $1 AND status IN ('pending', 'failed')`, id)
 	if err != nil {
 		return false, err
 	}

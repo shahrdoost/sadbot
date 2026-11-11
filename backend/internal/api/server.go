@@ -50,6 +50,7 @@ func NewRouter(d Deps) http.Handler {
 	// public: payment gateway callback (no JWT — the gateway redirects the user here)
 	if d.PaymentsH != nil {
 		r.Get("/api/v1/payments/callback", d.PaymentsH.Callback)
+		r.Post("/api/v1/payments/gateway-hook", d.PaymentsH.GatewayHook)
 	}
 
 	// everything below needs a valid JWT
@@ -127,6 +128,7 @@ func NewRouter(d Deps) http.Handler {
 		// plus the stuck-user scan and bulk chat resets
 		if d.AdminOpsH != nil {
 			r.With(botPerm(domain.PermBotUsers)).Get("/api/v1/bots/{botID}/admin/users/{userID}", d.AdminOpsH.UserDetail)
+			r.With(botPerm(domain.PermBotUsers)).Get("/api/v1/bots/{botID}/admin/users/{userID}/photo", d.AdminOpsH.UserPhoto)
 			r.With(botPerm(domain.PermBotFinance)).Post("/api/v1/bots/{botID}/admin/users/{userID}/coins", d.AdminOpsH.AdjustCoins)
 			r.With(botPerm(domain.PermBotConfig)).Post("/api/v1/bots/{botID}/admin/users/{userID}/reset", d.AdminOpsH.ResetUser)
 			r.With(botPerm(domain.PermBotConfig)).Post("/api/v1/bots/{botID}/admin/users/{userID}/block", d.AdminOpsH.SetBlocked)

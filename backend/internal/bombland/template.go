@@ -329,7 +329,7 @@ func (t *Template) doBuy(bc *engine.BotContext, botID uuid.UUID, pkgID string) {
 		msg := bc.Text("payment_link")
 		msg = strings.ReplaceAll(msg, "{link}", payURL)
 		bc.ReplyInline(msg, [][]engine.InlineButton{
-			{{Label: "✅ بررسی پرداخت", Callback: "act:pay:verify"}},
+			{{Label: "💳 پرداخت", URL: payURL}},
 			{{Label: "🏠 منوی اصلی", Callback: "act:status"}},
 		})
 		return

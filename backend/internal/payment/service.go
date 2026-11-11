@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"sadbot/internal/domain"
@@ -46,10 +47,21 @@ type Service struct {
 	gateway     *Gateway
 	notifier    Notifier
 	callbackURL string
+	notifyURL   string
+}
+
+// deriveNotifyURL is where the gateway POSTs verified/failed events, so
+// settlement does not depend on the buyer's browser landing back on the
+// callback. It is the callback URL with /callback swapped for /gateway-hook.
+func deriveNotifyURL(callbackURL string) string {
+	if strings.HasSuffix(callbackURL, "/callback") {
+		return strings.TrimSuffix(callbackURL, "/callback") + "/gateway-hook"
+	}
+	return ""
 }
 
 func NewService(store PaymentStore, coins CoinCreditor, gateway *Gateway, notifier Notifier, callbackURL string) *Service {
-	return &Service{store: store, coins: coins, gateway: gateway, notifier: notifier, callbackURL: callbackURL}
+	return &Service{store: store, coins: coins, gateway: gateway, notifier: notifier, callbackURL: callbackURL, notifyURL: deriveNotifyURL(callbackURL)}
 }
 
 // BuyPackage creates a pending coin_package payment and returns the pay URL.
@@ -71,7 +83,7 @@ func (s *Service) BuyPackage(ctx context.Context, botID uuid.UUID, userID int64,
 	if s.gateway.DevAllowed(telegramID) {
 		return "dev://payment-success", s.fulfill(ctx, p.ID)
 	}
-	res, err := s.gateway.CreatePayment(ctx, p.ID.String(), priceTomans, s.callbackURL)
+	res, err := s.gateway.CreatePayment(ctx, p.ID.String(), priceTomans, s.callbackURL, s.notifyURL)
 	if err != nil {
 		_, _ = s.store.MarkFailed(ctx, p.ID, "failed")
 		return "", err
@@ -95,7 +107,7 @@ func (s *Service) BuySubscription(ctx context.Context, botID uuid.UUID, userID i
 	if s.gateway.DevAllowed(telegramID) {
 		return "dev://payment-success", s.fulfill(ctx, p.ID)
 	}
-	res, err := s.gateway.CreatePayment(ctx, p.ID.String(), priceTomans, s.callbackURL)
+	res, err := s.gateway.CreatePayment(ctx, p.ID.String(), priceTomans, s.callbackURL, s.notifyURL)
 	if err != nil {
 		_, _ = s.store.MarkFailed(ctx, p.ID, "failed")
 		return "", err
@@ -110,9 +122,16 @@ func (s *Service) Complete(ctx context.Context, paymentID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if p.Status != "pending" {
+	if p.Status == "verified" {
 		return nil // already fulfilled
 	}
+	if p.Status != "pending" && p.Status != "failed" {
+		// refunded etc. must not read as success on a late callback
+		return fmt.Errorf("payment %s is %s", paymentID, p.Status)
+	}
+	// A "failed" row can still be genuinely paid: the buyer may retry the same
+	// pay link after the sweeper expired it. The gateway re-verifies either
+	// way, so only real money gets through.
 	ok, err := s.gateway.Verify(ctx, paymentID.String())
 	if err != nil {
 		return err // retryable — stays pending
@@ -123,13 +142,49 @@ func (s *Service) Complete(ctx context.Context, paymentID uuid.UUID) error {
 	return s.fulfill(ctx, paymentID)
 }
 
+// Hook handles the gateway's server-to-server push (verified/failed events).
+// The payload is never trusted: "verified" re-runs Complete (gateway re-check
+// + fulfill), and "failed" is honored only when the gateway's own status
+// agrees — a spoofed push cannot fail a payment we might still collect.
+func (s *Service) Hook(ctx context.Context, paymentID uuid.UUID, event string) error {
+	p, err := s.store.GetByID(ctx, paymentID)
+	if err != nil {
+		return err
+	}
+	switch event {
+	case "verified", "success":
+		return s.Complete(ctx, paymentID)
+	case "failed":
+		if p.Status != "pending" {
+			return nil
+		}
+		st, err := s.gateway.Status(ctx, p.ID.String())
+		if err != nil {
+			return err // retryable — sweeper is the safety net
+		}
+		if st != "failed" {
+			return nil // uncorroborated cancel — keep pending
+		}
+		ok, err := s.store.MarkFailed(ctx, p.ID, "failed")
+		if err != nil {
+			return err
+		}
+		if ok && s.notifier != nil && p.UserID != nil {
+			s.notifier.NotifyUser(p.BotID, *p.UserID,
+				"❌ پرداخت ناموفق بود.\nاز بخش خرید سکه دوباره اقدام کن.")
+		}
+		return nil
+	}
+	return nil
+}
+
 // fulfill credits the user exactly once (CAS on pending→verified).
 func (s *Service) fulfill(ctx context.Context, paymentID uuid.UUID) error {
 	p, err := s.store.GetByID(ctx, paymentID)
 	if err != nil {
 		return err
 	}
-	if p.Status != "pending" {
+	if p.Status != "pending" && p.Status != "failed" {
 		return nil
 	}
 	if p.UserID == nil {

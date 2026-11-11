@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   useAdjustCoinsMutation,
@@ -52,6 +52,7 @@ import {
   useStartBroadcastMutation,
   useStartBotMutation,
   useStopBotMutation,
+  userPhotoUrl,
   type ContentSettings,
   type ContentSettingsPut,
 } from './botsApi'
@@ -414,6 +415,54 @@ function PlatformBadge({ platform }: { platform: string }) {
   return <span className="inline-block text-xs rounded-full bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300 px-2 py-0.5">تلگرام</span>
 }
 
+// UserAvatar shows the photo the user uploaded in onboarding (blob fetch —
+// <img src> can't carry the JWT header), with an initial-letter fallback.
+function UserAvatar({ botId, userId, hasPhoto, name, className = 'w-9 h-9 text-xs' }: {
+  botId: string
+  userId: number
+  hasPhoto?: boolean
+  name?: string | null
+  className?: string
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!hasPhoto) return
+    let objectUrl: string | null = null
+    let cancelled = false
+    const token = localStorage.getItem('sadbot_token')
+    fetch(userPhotoUrl(botId, userId), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => {
+        if (r.status === 401) {
+          localStorage.removeItem('sadbot_token')
+          window.location.assign('/login')
+          throw new Error('auth')
+        }
+        if (!r.ok) throw new Error('no photo')
+        return r.blob()
+      })
+      .then((blob) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [botId, userId, hasPhoto])
+
+  const initial = (name || '؟').trim().charAt(0)
+  if (url) return <img src={url} alt="" className={`${className} rounded-full object-cover shrink-0`} />
+  return (
+    <div className={`${className} rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-300 shrink-0`}>
+      {initial}
+    </div>
+  )
+}
+
 function UsersTab({ botId }: { botId: string }) {
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
@@ -471,10 +520,15 @@ function UsersTab({ botId }: { botId: string }) {
               <td className="px-4 py-2 font-mono text-xs" dir="ltr">{u.telegram_id}</td>
               <td className="px-4 py-2"><PlatformBadge platform={u.platform} /></td>
               <td className="px-4 py-2">
-                {u.first_name ?? '—'}
-                {u.is_ghost && (
-                  <span className="ms-1 text-xs text-violet-500 dark:text-violet-400" title={u.ghost_persona ?? undefined}>👻</span>
-                )}
+                <div className="flex items-center gap-2">
+                  <UserAvatar botId={botId} userId={u.user_id} hasPhoto={u.has_photo} name={u.first_name} />
+                  <span>
+                    {u.first_name ?? '—'}
+                    {u.is_ghost && (
+                      <span className="ms-1 text-xs text-violet-500 dark:text-violet-400" title={u.ghost_persona ?? undefined}>👻</span>
+                    )}
+                  </span>
+                </div>
               </td>
               <td className="px-4 py-2 font-mono text-xs" dir="ltr">{u.username ? `@${u.username}` : '—'}</td>
               <td className="px-4 py-2">{u.coins != null ? toFaDigits(u.coins) : '—'}</td>
@@ -550,11 +604,16 @@ function UserDetailDrawer({ botId, userId, onClose }: { botId: string; userId: n
         ) : (
           <>
             <div className="card p-4 text-sm space-y-1">
-              <div className="flex items-center gap-2">
-                {d.first_name ?? '—'} {d.username ? `(@${d.username})` : ''}
-                <PlatformBadge platform={d.platform} />
+              <div className="flex items-center gap-3">
+                <UserAvatar botId={botId} userId={userId} hasPhoto={d.has_photo} name={d.name ?? d.first_name} className="w-16 h-16 text-xl" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    {d.first_name ?? '—'} {d.username ? `(@${d.username})` : ''}
+                    <PlatformBadge platform={d.platform} />
+                  </div>
+                  <div className="font-mono text-xs text-slate-500 dark:text-slate-400" dir="ltr">{d.telegram_id}</div>
+                </div>
               </div>
-              <div className="font-mono text-xs text-slate-500 dark:text-slate-400" dir="ltr">{d.telegram_id}</div>
               <div className="flex gap-3 pt-1">
                 <span>سکه: {toFaDigits(d.coins ?? 0)}</span>
                 <span>وضعیت: {d.status ?? '—'}</span>

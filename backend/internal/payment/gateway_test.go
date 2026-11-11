@@ -27,7 +27,7 @@ func TestCreatePayment_Success(t *testing.T) {
 			"success": true, "paymentId": "12345", "paymentLink": "http://gateway/pay/12345",
 		})
 	})
-	res, err := g.CreatePayment(context.Background(), "order-1", 50_000, "https://panel/callback")
+	res, err := g.CreatePayment(context.Background(), "order-1", 50_000, "https://panel/callback", "https://panel/gateway-hook")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +43,16 @@ func TestCreatePayment_Success(t *testing.T) {
 	if got["orderId"] != "order-1" || got["callbackUrl"] != "https://panel/callback" {
 		t.Fatalf("body = %+v", got)
 	}
+	if got["notifyUrl"] != "https://panel/gateway-hook" {
+		t.Fatalf("notifyUrl = %v", got["notifyUrl"])
+	}
 }
 
 func TestCreatePayment_GatewayRejects(t *testing.T) {
 	g, _ := newTestGateway(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": "bad order"})
 	})
-	if _, err := g.CreatePayment(context.Background(), "o", 10_000, "cb"); err == nil {
+	if _, err := g.CreatePayment(context.Background(), "o", 10_000, "cb", ""); err == nil {
 		t.Fatal("expected error on success=false")
 	}
 }
@@ -59,7 +62,7 @@ func TestCreatePayment_NonJSONPage(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html>502 Bad Gateway</html>"))
 	})
-	if _, err := g.CreatePayment(context.Background(), "o", 10_000, "cb"); err == nil {
+	if _, err := g.CreatePayment(context.Background(), "o", 10_000, "cb", ""); err == nil {
 		t.Fatal("HTML page must not parse as success")
 	}
 }

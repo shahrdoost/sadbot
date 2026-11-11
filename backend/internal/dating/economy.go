@@ -82,7 +82,6 @@ func showWallet(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 	}
 	lines := []string{
 		ttext(bc, "wallet.title", "💰 کیف پول شما"),
-		"━━━━━━━━━━━━━━",
 		fmt.Sprintf("سکه فعلی: %d", p.Coins),
 	}
 	if r := payRepoOf(bc); r != nil {
@@ -134,7 +133,7 @@ func showBuyCoins(bc *engine.BotContext) {
 func showSubscriptionOffer(bc *engine.BotContext) {
 	price := discountedSubPrice(bc)
 	bc.ReplyInline(
-		"⭐ اشتراک پریموم\n━━━━━━━━━━━━━━\n\n"+
+		"⭐ اشتراک پریموم\n\n"+
 			"• جستجوی نامحدود و رایگان\n"+
 			"• ۳۰٪ تخفیف خرید سکه\n\n"+
 			fmt.Sprintf("قیمت: %s تومان / ماه", formatTomans(price)),
@@ -158,7 +157,7 @@ func missionChannelEntries(bc *engine.BotContext) []struct{ ID, Title, Link stri
 					if strings.HasPrefix(s, "@") {
 						link = "https://t.me/" + strings.TrimPrefix(s, "@")
 					}
-					out = append(out, struct{ ID, Title, Link string }{ID: s, Title: s, Link: link})
+					out = append(out, struct{ ID, Title, Link string }{ID: s, Title: s, Link: channelLinkFor(bc, link)})
 				}
 			case map[string]any:
 				id := strings.TrimSpace(stringFromAny(ch["id"]))
@@ -177,11 +176,20 @@ func missionChannelEntries(bc *engine.BotContext) []struct{ ID, Title, Link stri
 						link = id
 					}
 				}
-				out = append(out, struct{ ID, Title, Link string }{ID: id, Title: title, Link: link})
+				out = append(out, struct{ ID, Title, Link string }{ID: id, Title: title, Link: channelLinkFor(bc, link)})
 			}
 		}
 	}
 	return out
+}
+
+// channelLinkFor serves each platform its own web link for the same channel:
+// Kat users must land on cr0.ir/<username>, Telegram users keep t.me.
+func channelLinkFor(bc *engine.BotContext, link string) string {
+	if bc.Platform == domain.PlatformKat {
+		return strings.Replace(link, "https://t.me/", "https://cr0.ir/", 1)
+	}
+	return link
 }
 
 func showMissions(bc *engine.BotContext, botID uuid.UUID, botUsername string) {
@@ -195,7 +203,7 @@ func showMissions(bc *engine.BotContext, botID uuid.UUID, botUsername string) {
 
 	var sb strings.Builder
 	sb.WriteString("🎁 ماموریت‌ها و پاداش‌ها\n")
-	sb.WriteString("━━━━━━━━━━━━━━━━\n\n")
+	sb.WriteString("\n")
 
 	// channel mission
 	if channelDone {
@@ -211,7 +219,7 @@ func showMissions(bc *engine.BotContext, botID uuid.UUID, botUsername string) {
 		sb.WriteString("بعد از عضویت، دکمهٔ زیر رو بزن 👇\n")
 	}
 
-	sb.WriteString("\n━━━━━━━━━━━━━━━━\n\n")
+	sb.WriteString("\n\n")
 	sb.WriteString("👥 دعوت دوستان\n")
 	sb.WriteString("لینک اختصاصی شما:\n")
 	sb.WriteString(refLink + "\n\n")
@@ -240,10 +248,10 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 	botID := botUUID(bc)
 
 	if strings.HasPrefix(action, "browse") {
-		return handleBrowseAction(bc, st, action)
+		return handleBrowseAction(bc, st, action) || fallbackAction(bc)
 	}
 	if strings.HasPrefix(action, "notify:") {
-		return handleNotificationAction(bc, st, action)
+		return handleNotificationAction(bc, st, action) || fallbackAction(bc)
 	}
 
 	switch {
@@ -281,6 +289,16 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 	case strings.HasPrefix(action, "edit:"):
 		return profileEditAction(bc, st, botID, strings.TrimPrefix(action, "edit:"))
 
+	case action == "account:delete":
+		return confirmAccountDelete(bc, st, botID)
+	case action == "account:delete:yes":
+		return doAccountDelete(bc, st, botID)
+	case action == "account:delete:no":
+		showProfilePage(bc, st, botID)
+		return true
+	case action == "account:reactivate":
+		return reactivateAccount(bc, st, botID)
+
 	case strings.HasPrefix(action, "int:toggle:"):
 		idx, _ := strconv.Atoi(strings.TrimPrefix(action, "int:toggle:"))
 		return handleInterestToggle(bc, idx)
@@ -298,7 +316,7 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 	case action == "mission:channel":
 		return checkChannelMission(bc, st, botID)
 	}
-	return false
+	return fallbackAction(bc)
 }
 
 func buyAction(bc *engine.BotContext, st *Store, botID uuid.UUID, what string) bool {
@@ -364,13 +382,13 @@ func buyAction(bc *engine.BotContext, st *Store, botID uuid.UUID, what string) b
 	return true
 }
 
-const vpnWarning = "⚠️ قبل از ورود به درگاه پرداخت:\n\nفیلترشکن (VPN) خود رو خاموش کنید!\n\nلینک رو کپی کنید و در مرورگر باز کنید، یا بعد از خاموش کردن VPN دوباره به این صفحه برگردید.\n\nبعد از پرداخت موفق، می‌تونید VPN رو دوباره روشن کنید."
+const vpnWarning = "⚠️ قبل از ورود به درگاه پرداخت:\n\nفیلترشکن (VPN) خود رو خاموش کنید!\n\nبعد از خاموش کردن VPN، روی دکمهٔ «💳 پرداخت» بزن.\n\nبعد از پرداخت موفق، می‌تونید VPN رو دوباره روشن کنید."
 
 func sendPaymentLink(bc *engine.BotContext, payURL, title string) {
 	bc.ReplyInline(
-		vpnWarning+"\n\n"+title+"\n\nروی لینک زیر کلیک کن:\n"+payURL,
+		vpnWarning+"\n\n"+title+"\n\nروی دکمهٔ «💳 پرداخت» بزن.",
 		[][]engine.InlineButton{
-			{{Label: "✅ بررسی پرداخت", Callback: "act:pay:verify"}},
+			{{Label: "💳 پرداخت", URL: payURL}},
 			{{Label: "🏠 منوی اصلی", Callback: "act:wallet:home"}},
 		},
 	)
@@ -389,7 +407,7 @@ func verifyPendingPayment(bc *engine.BotContext, botID uuid.UUID) bool {
 		bc.Reply("پرداخت فعالی برای بررسی نیست یا هنوز تایید نشده. چند دقیقه بعد دوباره تلاش کن.")
 		return true
 	}
-	bc.Reply("✅ پرداخت تایید شد!")
+	goHome(bc, "✅ پرداخت تایید شد!")
 	return true
 }
 
@@ -415,21 +433,26 @@ func checkChannelMission(bc *engine.BotContext, st *Store, botID uuid.UUID) bool
 		bc.Reply("ماموریت کانال فعال نیست.")
 		return true
 	}
-	check := channelCheckerOf(bc)
-	if check == nil {
-		bc.Reply("بررسی عضویت در دسترس نیست.")
-		return true
-	}
-	// all channels must be joined (kpkchat multi-channel parity)
-	for _, ch := range channels {
-		status, err := check(botID, ch, bc.TelegramID)
-		if err != nil {
-			bc.Reply("خطا در بررسی عضویت. لطفاً دوباره تلاش کن.")
+	// Kat has no getChatMember (METHOD_NOT_FOUND) — membership cannot be
+	// verified there, so the confirmation tap counts as joined. Telegram
+	// keeps the real check.
+	if bc.Platform != domain.PlatformKat {
+		check := channelCheckerOf(bc)
+		if check == nil {
+			bc.Reply("بررسی عضویت در دسترس نیست.")
 			return true
 		}
-		if status != "member" && status != "administrator" && status != "creator" {
-			bc.Reply("❌ هنوز عضو همه کانال‌ها نیستی!\nاول عضو شو، بعد دکمه «بررسی عضویت» رو بزن.")
-			return true
+		// all channels must be joined (kpkchat multi-channel parity)
+		for _, ch := range channels {
+			status, err := check(botID, ch, bc.TelegramID)
+			if err != nil {
+				bc.Reply("خطا در بررسی عضویت. لطفاً دوباره تلاش کن.")
+				return true
+			}
+			if status != "member" && status != "administrator" && status != "creator" {
+				bc.Reply("❌ هنوز عضو همه کانال‌ها نیستی!\nاول عضو شو، بعد دکمه «بررسی عضویت» رو بزن.")
+				return true
+			}
 		}
 	}
 	ctx := engineBG()

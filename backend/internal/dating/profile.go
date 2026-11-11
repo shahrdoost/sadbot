@@ -33,6 +33,13 @@ func showProfilePage(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 		bc.ReplyKBDStyled("پروفایل پیدا نشد. /start بزن.", homeKB)
 		return
 	}
+	if p.DeactivatedAt != nil {
+		bc.ReplyInline("👤 حساب شما غیرفعاله.\nدر جستجوها دیده نمیشی و پیامی از طرف کاربران دریافت نمی‌کنی (فقط پیام‌های تبلیغاتی آشنا).\nاطلاعاتت محفوظه و هر وقت خواستی فعالش کن.", [][]engine.InlineButton{
+			{{Label: "🔄 فعال‌سازی حساب", Callback: "act:account:reactivate"}},
+			{{Label: "🏠 منوی اصلی", Callback: "act:wallet:home"}},
+		})
+		return
+	}
 	genderFA := "نامشخص"
 	if p.Gender != nil && *p.Gender == "female" {
 		genderFA = "👩🏻 دختر"
@@ -41,7 +48,6 @@ func showProfilePage(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 	}
 	lines := []string{
 		"👤 حساب شما:",
-		"━━━━━━━━━━━━━━",
 		"📝 نام: " + derefStr(p.Name),
 		"⚥ جنسیت: " + genderFA,
 		"🎂 سن: " + derefInt(p.Age),
@@ -69,8 +75,95 @@ func showProfilePage(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 		{{Label: "✏️ تغییر نام", Callback: "act:edit:name"}, {Label: "✏️ تغییر سن", Callback: "act:edit:age"}},
 		{{Label: "✏️ تغییر جنسیت", Callback: "act:edit:gender"}, {Label: "✏️ تغییر محل سکونت", Callback: "act:edit:location"}},
 		{{Label: "📷 تغییر عکس پروفایل", Callback: "act:edit:photo"}, {Label: "🎯 تغییر علاقه‌مندی‌ها", Callback: "act:edit:interests"}},
-		{{Label: "💰 سکه", Callback: "act:wallet"}, {Label: "🏠 منوی اصلی", Callback: "act:wallet:home"}},
+		{{Label: "💰 سکه", Callback: "act:wallet"}, {Label: "🗑 حذف حساب", Callback: "act:account:delete"}},
+		{{Label: "🏠 منوی اصلی", Callback: "act:wallet:home"}},
 	})
+}
+
+// confirmAccountDelete explains the soft-delete semantics and asks once.
+func confirmAccountDelete(bc *engine.BotContext, st *Store, botID uuid.UUID) bool {
+	ctx := engineBG()
+	p, err := st.Profile(ctx, botID, bc.UserID)
+	if err != nil {
+		bc.Reply("خطا. /start بزن.")
+		return true
+	}
+	if p.DeactivatedAt != nil {
+		return reactivateAccount(bc, st, botID)
+	}
+	cost := bc.PriceInt("account_delete_cost", 3)
+	bc.ReplyInline(fmt.Sprintf("🗑 حذف حساب\n\nبا حذف حساب:\n• پروفایلت از جستجو و مرور پروفایل‌ها حذف میشه\n• پیامی از طرف کاربران دریافت نمی‌کنی\n• فقط پیام‌های تبلیغاتی آشنا برات میره\n• اطلاعاتت پاک نمیشه و هر وقت خواستی می‌تونی دوباره فعالش کنی\n\n💰 هزینه: %d سکه\n\nتأیید می‌کنی؟", cost),
+		[][]engine.InlineButton{
+			{{Label: "✅ بله، حذف کن", Callback: "act:account:delete:yes"}},
+			{{Label: "❌ انصراف", Callback: "act:account:delete:no"}},
+		})
+	return true
+}
+
+// doAccountDelete spends the fee, ends any live chat so no peer message can
+// reach the user, and soft-deactivates the profile.
+func doAccountDelete(bc *engine.BotContext, st *Store, botID uuid.UUID) bool {
+	ctx := engineBG()
+	p, err := st.Profile(ctx, botID, bc.UserID)
+	if err != nil {
+		bc.Reply("خطا. /start بزن.")
+		return true
+	}
+	if p.DeactivatedAt != nil {
+		showProfilePage(bc, st, botID)
+		return true
+	}
+	cost := bc.PriceInt("account_delete_cost", 3)
+	if !spendOrRefuse(bc, st, botID, cost) {
+		return true
+	}
+	if p.Status == domain.DatingChatting && p.PartnerUserID != nil {
+		partnerID := *p.PartnerUserID
+		if !partnerIsGhost(ctx, st, botID, partnerID) {
+			if platform, tgID, perr := partnerAddress(ctx, st, botID, partnerID); perr == nil && tgID > 0 {
+				_, _ = bc.SendKBDToPlatform(platform, tgID,
+					"مخاطب چت رو ترک کرد.\nبه مخاطبت امتیاز بده:", ratingRows)
+			}
+			_ = st.SetScene(ctx, bc.BotID, partnerID, "rating")
+		}
+		_ = st.EndChatForBoth(ctx, botID, bc.UserID, partnerID)
+		// the leaver is leaving — no rating prompt for them
+		_ = st.Repo().ClearPendingRate(ctx, botID, bc.UserID)
+	}
+	_ = st.Repo().LeaveSearch(ctx, botID, bc.UserID)
+	now := time.Now().UTC()
+	if err := st.Repo().SetDeactivated(ctx, botID, bc.UserID, &now); err != nil {
+		bc.Reply("خطا در غیرفعال‌سازی. دوباره تلاش کن.")
+		return true
+	}
+	bc.State["scene"] = "home"
+	bc.State["step"] = ""
+	bc.SaveState()
+	goHome(bc, "✅ حسابت غیرفعال شد.\nاز جستجوها حذف شدی و پیامی از طرف کاربران دریافت نمی‌کنی (فقط پیام‌های تبلیغاتی آشنا).\nبرای فعال‌سازی دوباره: 👤 پروفایل من")
+	return true
+}
+
+// reactivateAccount lifts the soft delete; free.
+func reactivateAccount(bc *engine.BotContext, st *Store, botID uuid.UUID) bool {
+	if err := st.Repo().SetDeactivated(engineBG(), botID, bc.UserID, nil); err != nil {
+		bc.Reply("خطا در فعال‌سازی. دوباره تلاش کن.")
+		return true
+	}
+	goHome(bc, "🔄 حسابت دوباره فعال شد. خوش اومدی! 👋")
+	return true
+}
+
+// denyIfDeactivated keeps deactivated accounts out of the dating pool UIs.
+func denyIfDeactivated(bc *engine.BotContext, st *Store, botID uuid.UUID) bool {
+	p, err := st.Profile(engineBG(), botID, bc.UserID)
+	if err != nil || p.DeactivatedAt == nil {
+		return false
+	}
+	bc.ReplyInline("حسابت غیرفعاله و توی جستجوها دیده نمیشی.", [][]engine.InlineButton{
+		{{Label: "🔄 فعال‌سازی حساب", Callback: "act:account:reactivate"}},
+		{{Label: "🏠 منوی اصلی", Callback: "act:wallet:home"}},
+	})
+	return true
 }
 
 func photoStatus(p *domain.DatingProfile) string {
@@ -198,7 +291,7 @@ func openInterestsPicker(bc *engine.BotContext, p *domain.DatingProfile) bool {
 }
 
 func interestsIntro(sel []string) string {
-	head := "🎯 علاقه‌مندی‌ها\n━━━━━━━━━━━━━━\nاز دکمه‌های زیر علاقه‌مندی‌هات رو انتخاب کن.\nحداکثر ۵ تا."
+	head := "🎯 علاقه‌مندی‌ها\nاز دکمه‌های زیر علاقه‌مندی‌هات رو انتخاب کن.\nحداکثر ۵ تا."
 	if len(sel) > 0 {
 		return head + "\n\nانتخاب فعلی: " + strings.Join(sel, "، ")
 	}

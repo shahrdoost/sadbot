@@ -3,6 +3,7 @@ package dating
 import (
 	"testing"
 
+	"sadbot/internal/domain"
 	"sadbot/internal/engine"
 
 	"github.com/google/uuid"
@@ -10,6 +11,38 @@ import (
 
 func priceCtx(prices map[string]any) *engine.BotContext {
 	return &engine.BotContext{Prices: prices, State: map[string]any{"data": map[string]any{}}}
+}
+
+// TestChannelLinkPerPlatform: the missions screen serves each platform its own
+// web link for the same channel — Kat gets cr0.ir/<username>, Telegram keeps
+// t.me untouched (user: «به تلگرامش دست نزن»).
+func TestChannelLinkPerPlatform(t *testing.T) {
+	prices := map[string]any{
+		"channels": []any{
+			map[string]any{"id": "@ashna_dating", "title": "آشنا دیتینگ", "link": "https://t.me/ashna_dating"},
+			"@plain_chan",
+		},
+	}
+
+	tg := priceCtx(prices)
+	tg.Platform = domain.PlatformTelegram
+	entries := missionChannelEntries(tg)
+	if entries[0].Link != "https://t.me/ashna_dating" {
+		t.Fatalf("telegram link must stay t.me: %q", entries[0].Link)
+	}
+	if entries[1].Link != "https://t.me/plain_chan" {
+		t.Fatalf("telegram auto link: %q", entries[1].Link)
+	}
+
+	kat := priceCtx(prices)
+	kat.Platform = domain.PlatformKat
+	entries = missionChannelEntries(kat)
+	if entries[0].Link != "https://cr0.ir/ashna_dating" {
+		t.Fatalf("kat link must be cr0.ir: %q", entries[0].Link)
+	}
+	if entries[1].Link != "https://cr0.ir/plain_chan" {
+		t.Fatalf("kat auto link: %q", entries[1].Link)
+	}
 }
 
 func TestSearchCost_KpkchatParity(t *testing.T) {

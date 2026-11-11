@@ -34,6 +34,12 @@ type CaptionEditor interface {
 	EditCaption(ctx context.Context, chatID, msgID int64, text string, kbd json.RawMessage) error
 }
 
+// MessageDeleter is an optional Sender capability: browse cards are deleted
+// when the deck advances instead of lingering as edited stubs.
+type MessageDeleter interface {
+	Delete(ctx context.Context, chatID, msgID int64) error
+}
+
 // MediaForwarder relays any media a user sent to their chat partner. Optional
 // capability: senders that can't copy media return the "not supported" error
 // and the template tells the user it only carries text right now.
@@ -74,6 +80,7 @@ type BotContext struct {
 	ChatID        int64
 	MsgID         int64 // message_id of the inbound message (0 for callbacks)
 	Sender        Sender
+	AutoView      bool // replace-view navigation: keyboard screens replace each other
 	State         map[string]any // decoded state; mutate then SaveState
 	Data          map[string]any // DI bag for template stores (e.g. "dating")
 	texts         map[string]any
@@ -123,6 +130,9 @@ func New(registry *Registry, users UserStore, events EventStore, configs ConfigS
 
 // SetData injects dependencies exposed to templates via BotContext.Data.
 func (e *Engine) SetData(key string, v any) { e.data[key] = v }
+
+// TemplateFor returns the registered template for a bot's template key.
+func (e *Engine) TemplateFor(key string) (Template, bool) { return e.registry.Get(key) }
 
 // SetRouter injects the cross-platform send router (runtime.Manager).
 func (e *Engine) SetRouter(r Router) { e.router = r }
@@ -187,6 +197,9 @@ func (e *Engine) HandleUpdate(ctx context.Context, platform string, bot *domain.
 	}
 	if ah, ok := tpl.(ActionHandler); ok {
 		bc.actionHandler = ah
+	}
+	if vr, ok := tpl.(ViewReplaceable); ok && vr.ReplaceViews() {
+		bc.AutoView = true
 	}
 
 	// Log inbound. The scene is recorded so the panel can reconstruct a chat
@@ -417,8 +430,68 @@ func (bc *BotContext) ReplyKBDStyled(text string, rows [][]KBButton) *telegram.M
 	if err != nil {
 		return nil
 	}
+	// delete the previous screen only after the new one is on screen: a failed
+	// send must never leave the chat empty.
+	bc.viewDrop()
+	bc.viewTrack(msg)
 	_ = bc.events.Insert(context.Background(), bc.BotID, bc.UserID, domain.EventOutboundMessage, &text, mustMeta(map[string]any{"msg_id": msg.MessageID}))
 	return msg
+}
+
+// --- replace-view tracking (opt-in via AutoView) ---
+
+// stateNum coerces a state value to an int64 (JSON round-trips make numbers
+// float64 / json.Number).
+func stateNum(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	}
+	return 0
+}
+
+// viewDrop deletes the previous tracked screen message so the next screen
+// replaces it in place. No-op unless the template opted into AutoView.
+func (bc *BotContext) viewDrop() {
+	if !bc.AutoView {
+		return
+	}
+	data := bc.dataMap()
+	id := stateNum(data["view_msg"])
+	if id == 0 {
+		return
+	}
+	delete(data, "view_msg")
+	if d, ok := bc.Sender.(MessageDeleter); ok {
+		_ = d.Delete(context.Background(), bc.ChatID, id)
+	}
+	bc.SaveState()
+}
+
+// viewTrack records the screen message just sent as the current view.
+func (bc *BotContext) viewTrack(msg *telegram.Message) {
+	if !bc.AutoView || msg == nil {
+		return
+	}
+	bc.dataMap()["view_msg"] = msg.MessageID
+	bc.SaveState()
+}
+
+// UntrackView drops the tracked view id WITHOUT deleting the message (the
+// screen stays on purpose, e.g. an edited browse-card notice).
+func (bc *BotContext) UntrackView() {
+	data := bc.dataMap()
+	if _, ok := data["view_msg"]; ok {
+		delete(data, "view_msg")
+		bc.SaveState()
+	}
 }
 
 // SendTo sends a message to an arbitrary chat (e.g. the chat partner).
@@ -556,10 +629,13 @@ func (bc *BotContext) RecordInbound(text string, extraMeta map[string]any) {
 		domain.EventInboundMessage, &text, mustMeta(meta))
 }
 
-// ReplyInline sends text with an inline keyboard. Each button is {label, callbackData}.
+// ReplyInline sends text with an inline keyboard. Each button is {label,
+// callbackData} or {label, url} — a URL button opens the link in place of a
+// callback (e.g. the pay link itself as the button).
 type InlineButton struct {
 	Label    string
 	Callback string
+	URL      string
 }
 
 func (bc *BotContext) ReplyInline(text string, rows [][]InlineButton) *telegram.Message {
@@ -567,7 +643,7 @@ func (bc *BotContext) ReplyInline(text string, rows [][]InlineButton) *telegram.
 	for _, row := range rows {
 		var kRow []telegram.InlineKeyboardButton
 		for _, b := range row {
-			kRow = append(kRow, telegram.InlineKeyboardButton{Text: b.Label, CallbackData: b.Callback})
+			kRow = append(kRow, telegram.InlineKeyboardButton{Text: b.Label, CallbackData: b.Callback, URL: b.URL})
 		}
 		if len(kRow) > 0 {
 			kbd.InlineKeyboard = append(kbd.InlineKeyboard, kRow)
@@ -578,6 +654,9 @@ func (bc *BotContext) ReplyInline(text string, rows [][]InlineButton) *telegram.
 	if err != nil {
 		return nil
 	}
+	// replace the previous screen only after the new one is on screen.
+	bc.viewDrop()
+	bc.viewTrack(msg)
 	_ = bc.events.Insert(context.Background(), bc.BotID, bc.UserID, domain.EventOutboundMessage, &text, mustMeta(map[string]any{"msg_id": msg.MessageID}))
 	return msg
 }
@@ -593,17 +672,29 @@ func (bc *BotContext) SendPhotoKBD(chatID int64, fileID, caption string, rows []
 	for _, row := range rows {
 		var kRow []telegram.InlineKeyboardButton
 		for _, b := range row {
-			kRow = append(kRow, telegram.InlineKeyboardButton{Text: b.Label, CallbackData: b.Callback})
+			kRow = append(kRow, telegram.InlineKeyboardButton{Text: b.Label, CallbackData: b.Callback, URL: b.URL})
 		}
 		if len(kRow) > 0 {
 			kbd.InlineKeyboard = append(kbd.InlineKeyboard, kRow)
 		}
 	}
 	raw, _ := json.Marshal(kbd)
+	// photo cards track themselves (browse_card_msg fallback for caption
+	// edits); only the self-chat case participates in replace-view — and the
+	// old screen goes only once the new one is on screen.
 	msg, err := ps.SendPhoto(context.Background(), chatID, fileID, caption, raw)
 	if err != nil {
 		log.Printf("[engine] send photo: %v", err)
+		// a photo the platform cannot render (e.g. a Telegram file_id sent to
+		// Kat) must not leave the chat empty — the text card replaces it
+		if chatID == bc.ChatID {
+			return bc.ReplyInline(caption, rows)
+		}
 		return nil
+	}
+	if chatID == bc.ChatID {
+		bc.viewDrop()
+		bc.viewTrack(msg)
 	}
 	_ = bc.events.Insert(context.Background(), bc.BotID, bc.UserID, domain.EventOutboundMessage, &caption, mustMeta(map[string]any{"msg_id": msg.MessageID, "photo": true}))
 	return msg

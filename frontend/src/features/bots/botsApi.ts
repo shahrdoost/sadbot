@@ -9,6 +9,23 @@ const baseQuery = fetchBaseQuery({
   },
 })
 
+// expired/invalid token → drop it and land on the login page instead of
+// leaving every page silently empty. The telegram-account login wizard uses
+// 401 for PASSWORD_NEEDED / wrong 2FA — those are form input, not expiry.
+const baseQueryWithAuth: typeof baseQuery = async (args, api, extra) => {
+  const result = await baseQuery(args, api, extra)
+  if (result.error && result.error.status === 401) {
+    const msg = (result.error.data as { error?: string } | undefined)?.error ?? ''
+    if (!msg.includes('PASSWORD_NEEDED') && !msg.includes('رمز عبور')) {
+      localStorage.removeItem('sadbot_token')
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login')
+      }
+    }
+  }
+  return result
+}
+
 export interface Admin {
   id: string
   email: string
@@ -221,6 +238,7 @@ export interface DatingUser {
   total_ratings?: number
   is_ghost: boolean
   ghost_persona?: string
+  has_photo?: boolean
 }
 
 export interface BlockPair {
@@ -297,6 +315,7 @@ export interface UserDetail {
   streak_best?: number
   boosted_until?: string
   profile_blocked_at?: string
+  has_photo?: boolean
   blocked_reason?: string
   likes_sent: number
   likes_received: number
@@ -402,7 +421,7 @@ export interface AIDetail {
 
 export const sadbotApi = createApi({
   reducerPath: 'sadbotApi',
-  baseQuery,
+  baseQuery: baseQueryWithAuth,
   tagTypes: ['Bot', 'BotUser', 'Event', 'Payment', 'Config', 'Admin', 'Finance', 'Stats', 'TgAccount', 'TgChat', 'Confession', 'Ticket', 'DatingUser', 'Broadcast', 'Discount', 'AdminOps', 'Chats', 'Channels', 'AI', 'Blocks', 'ContentSettings', 'ContentPosts'],
   endpoints: (builder) => ({
     login: builder.mutation<{ access_token: string; admin: Admin }, { email: string; password: string }>({
@@ -745,6 +764,12 @@ export const sadbotApi = createApi({
     }),
   }),
 })
+
+// userPhotoUrl serves a dating user's uploaded profile photo (auth header
+// required — fetch as blob, plain <img src> can't carry the JWT).
+export function userPhotoUrl(botId: string, userId: number): string {
+  return `/api/v1/bots/${botId}/admin/users/${userId}/photo`
+}
 
 export const {
   useLoginMutation,

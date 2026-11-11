@@ -36,6 +36,19 @@ type ActionHandler interface {
 	HandleAction(bc *BotContext, action string) bool
 }
 
+// Commander lets a template register its platform ☰ menu (setMyCommands) at
+// startup so users see real commands instead of placeholder buttons.
+type Commander interface {
+	BotCommands() []telegram.BotCommand
+}
+
+// ViewReplaceable opts a template into replace-view navigation: every
+// keyboard-bearing self-send deletes the previous one, so menu screens don't
+// stack as the user navigates («الان هی پیام جدید میشه»).
+type ViewReplaceable interface {
+	ReplaceViews() bool
+}
+
 // Registry holds all built-in templates.
 type Registry struct {
 	templates map[string]Template

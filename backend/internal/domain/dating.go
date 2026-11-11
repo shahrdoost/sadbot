@@ -47,6 +47,7 @@ type DatingProfile struct {
 	BoostedUntil      *time.Time `json:"boosted_until,omitempty"`
 	NameEditedAt      *time.Time `json:"name_edited_at,omitempty"`
 	ProfileEditedAt   *time.Time `json:"profile_edited_at,omitempty"`
+	DeactivatedAt     *time.Time `json:"deactivated_at,omitempty"`
 }
 
 // DatingLike is a browse action (like/super/pass) from one user to another.

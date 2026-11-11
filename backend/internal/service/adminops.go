@@ -25,6 +25,7 @@ type AdminOpsService struct {
 	audit        *postgres.AuditRepo
 	configs      *postgres.ConfigRepo
 	notify       func(ctx context.Context, botID uuid.UUID, platform string, telegramID int64, text string) error
+	photoFetch   func(ctx context.Context, botID uuid.UUID, platform, fileID string) ([]byte, string, error)
 	searchingMin int
 	chattingMin  int
 }
@@ -52,6 +53,26 @@ func (s *AdminOpsService) SetStuckThresholds(searchingMin, chattingMin int) {
 	if chattingMin > 0 {
 		s.chattingMin = chattingMin
 	}
+}
+
+// SetPhotoFetcher injects the bot-token photo downloader (getFile + bytes).
+func (s *AdminOpsService) SetPhotoFetcher(fn func(ctx context.Context, botID uuid.UUID, platform, fileID string) ([]byte, string, error)) {
+	s.photoFetch = fn
+}
+
+// UserPhoto returns the user's uploaded profile photo bytes and mime type.
+func (s *AdminOpsService) UserPhoto(ctx context.Context, botID uuid.UUID, userID int64) ([]byte, string, error) {
+	if s.photoFetch == nil {
+		return nil, "", errors.New("photo fetch not configured")
+	}
+	p, err := s.dating.GetProfile(ctx, botID, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if p.PhotoFileID == nil || *p.PhotoFileID == "" {
+		return nil, "", errors.New("no photo")
+	}
+	return s.photoFetch(ctx, botID, p.Platform, *p.PhotoFileID)
 }
 
 func (s *AdminOpsService) log(ctx context.Context, actor uuid.UUID, action, botID string, userID int64, meta map[string]any) {

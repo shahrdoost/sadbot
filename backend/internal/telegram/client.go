@@ -196,6 +196,12 @@ func (c *Client) GetMe(ctx context.Context) (*GetMeResult, error) {
 	return &out, nil
 }
 
+// SetMyCommands replaces the bot's ☰ command menu. Best-effort at startup:
+// platforms without the method return ErrUnsupported.
+func (c *Client) SetMyCommands(ctx context.Context, cmds []BotCommand) error {
+	return c.do(ctx, "setMyCommands", SetMyCommandsPayload{Commands: cmds}, nil)
+}
+
 // GetUpdates long-polls. Pass a ctx with timeout ≈ long-poll timeout.
 func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSec int) ([]Update, error) {
 	form := url.Values{}
@@ -339,6 +345,49 @@ func (c *Client) EditMessageCaption(ctx context.Context, p EditMessageCaptionPay
 		return nil, err
 	}
 	return &msg, nil
+}
+
+func (c *Client) DeleteMessage(ctx context.Context, p DeleteMessagePayload) error {
+	return c.do(ctx, "deleteMessage", p, nil)
+}
+
+// DownloadFileByFileID resolves a file_id and fetches the bytes (panel
+// avatars). Returns the payload and its content type.
+func (c *Client) DownloadFileByFileID(ctx context.Context, fileID string) ([]byte, string, error) {
+	var f struct {
+		FilePath string `json:"file_path"`
+	}
+	if err := c.do(ctx, "getFile", map[string]any{"file_id": fileID}, &f); err != nil {
+		return nil, "", err
+	}
+	if f.FilePath == "" {
+		return nil, "", errors.New("getFile returned no file_path")
+	}
+	// API methods hang off /bot<token>/, file bytes off /file/bot<token>/
+	fileURL := strings.Replace(c.base, "/bot"+c.token+"/", "/file/bot"+c.token+"/", 1) + f.FilePath
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download %s: HTTP %d", f.FilePath, resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	// Telegram's file server answers octet-stream for images — browsers need
+	// a real image type for <img> blobs
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
 }
 
 func (c *Client) SendChatAction(ctx context.Context, chatID int64, action string) error {

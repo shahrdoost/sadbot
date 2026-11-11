@@ -402,6 +402,13 @@ func main() {
 			return err
 		})
 	adminOpsH := handlers.NewAdminOpsHandler(adminOpsSvc)
+	adminOpsSvc.SetPhotoFetcher(func(c context.Context, botID uuid.UUID, platform, fileID string) ([]byte, string, error) {
+		client, ok := runtimeMgr.ClientForPlatform(botID, platform)
+		if !ok {
+			return nil, "", errors.New("bot not running")
+		}
+		return client.DownloadFileByFileID(c, fileID)
+	})
 	contentSvc := service.NewContentService(botSvc, tgAccountSvc, contentRepo)
 	contentH := handlers.NewContentHandler(contentSvc)
 

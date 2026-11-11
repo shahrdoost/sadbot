@@ -60,13 +60,17 @@ type CreateResult struct {
 }
 
 // CreatePayment requests a payment link. amountTomans is converted to rials (×10)
-// exactly like kpkchat. callbackURL must be the public /api/v1/payments/callback URL.
-func (g *Gateway) CreatePayment(ctx context.Context, orderID string, amountTomans int64, callbackURL string) (*CreateResult, error) {
+// exactly like kpkchat. callbackURL must be the public /api/v1/payments/callback
+// URL; notifyURL (optional) is where the gateway POSTs verified/failed events.
+func (g *Gateway) CreatePayment(ctx context.Context, orderID string, amountTomans int64, callbackURL, notifyURL string) (*CreateResult, error) {
 	body := map[string]any{
 		"orderId":     orderID,
 		"amount":      amountTomans * 10,
 		"callbackUrl": callbackURL,
 		"payerId":     "0",
+	}
+	if notifyURL != "" {
+		body["notifyUrl"] = notifyURL
 	}
 	data, err := g.call(ctx, http.MethodPost, g.host+"/payment/api/create-payment", body)
 	if err != nil {
@@ -103,6 +107,22 @@ func (g *Gateway) Verify(ctx context.Context, orderID string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// Status reads the gateway's own row status for the order ("created",
+// "pending", "verified", "failed"). Used to corroborate a failure push before
+// failing a payment on this side.
+func (g *Gateway) Status(ctx context.Context, orderID string) (string, error) {
+	data, err := g.call(ctx, http.MethodGet, g.host+"/payment/api/status/"+orderID, nil)
+	if err != nil {
+		return "", fmt.Errorf("gateway status: %w", err)
+	}
+	if p, ok := data["payment"].(map[string]any); ok {
+		s, _ := p["status"].(string)
+		return s, nil
+	}
+	s, _ := data["status"].(string)
+	return s, nil
 }
 
 // verifyResult accepts every success shape kpkchat observed (Zibal variants).

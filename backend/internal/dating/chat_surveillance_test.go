@@ -29,13 +29,14 @@ func TestChatSurveillance(t *testing.T) {
 		t.Fatalf("precondition: both must be chatting, got %s / %s", pA.Status, pB.Status)
 	}
 
-	// one conversation message each way, plus a menu press typed while still in
-	// the chat scene — the engine logs the scene the message *arrived* in, so
-	// this button tap is legitimately part of the chat-scene record (test 2
-	// proves messages from other scenes stay out)
+	// one conversation message each way, plus a third typed line — the engine
+	// logs the scene the message *arrived* in, so chat text is part of the
+	// chat-scene record (test 2 proves messages from other scenes stay out).
+	// (The home keyboard label is no longer usable here: it now leaves the
+	// chat instead of relaying.)
 	e.feed(t, e.sendA, "سلام، حالت چطوره؟")
 	e.feed(t, e.sendB, "سلام! ممنون، عالی")
-	e.feed(t, e.sendA, "🏠 منوی اصلی")
+	e.feed(t, e.sendA, "فعلاً خداحافظ")
 
 	// --- active chats must show exactly one deduplicated pair ---
 	chats, err := e.store.Repo().ActiveChats(ctx, e.botID)
@@ -97,8 +98,8 @@ func TestChatSurveillance(t *testing.T) {
 	if len(feed) != 6 {
 		t.Fatalf("global feed must hold both directions of the 3 chat messages, got %d", len(feed))
 	}
-	// newest first: the last thing said was the menu tap, the first was A's line
-	if !contains(feed[0].Text, "منوی اصلی") {
+	// newest first: the last thing said was A's farewell, the first was A's line
+	if !contains(feed[0].Text, "خداحافظ") {
 		t.Fatalf("feed must be newest-first: %+v", feed[0])
 	}
 	if !contains(feed[len(feed)-1].Text, "حالت") {

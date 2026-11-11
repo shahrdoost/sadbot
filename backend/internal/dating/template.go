@@ -148,7 +148,7 @@ func stateKBD(rows ...[]string) [][]string { return rows }
 
 // --- kpkchat texts (ported verbatim) ---
 
-const humanRules = "\n\n━━━━━━━━━━━━━━\n* لطفا احترام بگذارید و برای مخاطب مقابل شعور قائل باشید\n* از کلمات رکیک استفاده نکنید\n* در پایان مکالمه با ثبت امتیاز وضعیت کاربر را مشخص کنید\n━━━━━━━━━━━━━━"
+const humanRules = "\n\n🤝\n* لطفا احترام بگذارید و برای مخاطب مقابل شعور قائل باشید\n* از کلمات رکیک استفاده نکنید\n* در پایان مکالمه با ثبت امتیاز وضعیت کاربر را مشخص کنید"
 
 // homeKB / searchKB mirror kpkchat's colored reply keyboards (Bot API 7.11+
 // button styles: primary = brand blue, success = green). Labels stay the
@@ -189,6 +189,7 @@ func kbLabelRows(rows [][]engine.KBButton) [][]string {
 var chatRows = [][]string{
 	{"🛑 قطع مکالمه"},
 	{"🚫 بلاک"},
+	{"🏠 منوی اصلی"},
 }
 
 var ratingRows = [][]string{
@@ -279,10 +280,97 @@ func isHomeButtonText(text string) bool {
 	return false
 }
 
+// commandLabels maps bot-menu commands (the platform ☰ menu, registered via
+// setMyCommands) to home-keyboard labels so a menu tap navigates like a
+// button press.
+var commandLabels = map[string]string{
+	"menu":     "🏠 منوی اصلی",
+	"home":     "🏠 منوی اصلی",
+	"help":     "📖 راهنما",
+	"browse":   "💘 مرور پروفایل‌ها",
+	"search":   "🔍 جستجوی ویژه",
+	"random":   "🔗 به یک ناشناس وصلم کن",
+	"wallet":   "💰 سکه",
+	"profile":  "👤 پروفایل من",
+	"missions": "🎁 ماموریت‌ها",
+	"confess":  "💌 اعتراف ناشناس",
+	"ai":       "🤖 چت با دستیار",
+	"support":  "📩 پشتیبانی",
+}
+
+// resolveCommand maps «/browse@somebot» to its home label.
+func resolveCommand(text string) (string, bool) {
+	cmd := strings.TrimSpace(text)
+	if !strings.HasPrefix(cmd, "/") {
+		return "", false
+	}
+	if i := strings.Index(cmd, "@"); i >= 0 {
+		cmd = cmd[:i]
+	}
+	label, ok := commandLabels[strings.ToLower(strings.TrimPrefix(cmd, "/"))]
+	return label, ok
+}
+
+// BotCommands registers the platform ☰ menu (engine.Commander).
+func (t *Template) BotCommands() []telegram.BotCommand {
+	return []telegram.BotCommand{
+		{Command: "start", Description: "منوی اصلی"},
+		{Command: "menu", Description: "منوی اصلی"},
+		{Command: "random", Description: "وصل شدن به یک ناشناس"},
+		{Command: "browse", Description: "مرور پروفایل‌ها"},
+		{Command: "search", Description: "جستجوی ویژه"},
+		{Command: "profile", Description: "پروفایل من"},
+		{Command: "wallet", Description: "کیف پول و سکه"},
+		{Command: "missions", Description: "ماموریت‌ها"},
+		{Command: "confess", Description: "اعتراف ناشناس"},
+		{Command: "ai", Description: "چت با دستیار"},
+		{Command: "support", Description: "پشتیبانی"},
+		{Command: "help", Description: "راهنما"},
+	}
+}
+
+// ReplaceViews opts the dating template into replace-view navigation: each
+// menu screen deletes the previous one instead of stacking («الان هی پیام
+// جدید میشه»).
+func (t *Template) ReplaceViews() bool { return true }
+
+// fallbackHome catches input no scene consumed (e.g. Kat placeholder
+// «دکمه یک» presses): config labels still fire, everything else lands on the
+// complete home menu instead of a dead-end reply with no keyboard.
+func fallbackHome(bc *engine.BotContext, text string) bool {
+	if action, found := bc.LookupLabel(text); found {
+		bc.DispatchAction(action)
+		return true
+	}
+	goHome(bc, ttext(bc, "home.welcome", "خوش اومدی! 👋\nچیکار برات انجام بدم؟"))
+	return true
+}
+
+// fallbackAction is the act:* twin of fallbackHome. It never hijacks an active
+// chat (a stale inline button must not strand the conversation).
+func fallbackAction(bc *engine.BotContext) bool {
+	if scene(bc) == "chat" {
+		return false
+	}
+	return fallbackHome(bc, "")
+}
+
 func (t *Template) HandleMessage(bc *engine.BotContext, text string) bool {
 	st := storeOf(bc)
 	if st == nil {
 		return false
+	}
+	// bot-menu commands («/browse@bot» from the platform ☰ menu) act as
+	// home-menu navigation. Skipped inside chat (text must reach the partner)
+	// and setup (free text is onboarding input).
+	if label, ok := resolveCommand(text); ok && scene(bc) != "chat" && scene(bc) != "setup" {
+		bc.State["scene"] = "home"
+		bc.State["step"] = ""
+		bc.SaveState()
+		if handleHome(bc, st, label) {
+			return true
+		}
+		return fallbackHome(bc, label)
 	}
 	// The persistent home keyboard stays visible in inline-only scenes, so any
 	// home-menu label must navigate instead of being swallowed as scene input.
@@ -291,41 +379,44 @@ func (t *Template) HandleMessage(bc *engine.BotContext, text string) bool {
 	switch scene(bc) {
 	case "browse", "search", "ai", "confess", "support":
 		if isHomeButtonText(text) {
-			if scene(bc) == "browse" {
-				// close the on-screen card so its buttons don't stay live
-				finishCard(bc, "🏠 منوی اصلی")
-			}
 			bc.State["scene"] = "home"
 			bc.State["step"] = ""
 			bc.SaveState()
-			return handleHome(bc, st, text)
+			return handleHome(bc, st, text) || fallbackHome(bc, text)
+		}
+	}
+	// rating reconcile: a star press must land even when the scene wasn't
+	// updated (e.g. the partner blocked and only their own scene changed).
+	if _, isScore := map[string]int{"⭐": 1, "⭐⭐": 2, "⭐⭐⭐": 3, "⭐⭐⭐⭐": 4, "⭐⭐⭐⭐⭐": 5}[text]; isScore {
+		if pending, _ := st.Repo().GetPendingRate(engineBG(), botUUID(bc), bc.UserID); pending != nil {
+			if p, err := st.Profile(engineBG(), botUUID(bc), bc.UserID); err == nil && p.Status != domain.DatingChatting {
+				return handleRating(bc, st, text)
+			}
 		}
 	}
 	switch scene(bc) {
 	case "setup":
-		return handleSetup(bc, st, text)
+		return handleSetup(bc, st, text) || fallbackHome(bc, text)
 	case "chat":
 		return handleChat(bc, st, text)
 	case "rating":
-		return handleRating(bc, st, text)
+		return handleRating(bc, st, text) || fallbackHome(bc, text)
 	case "search":
-		return handleSearchScene(bc, st, text)
+		return handleSearchScene(bc, st, text) || fallbackHome(bc, text)
 	case "browse":
-		return handleBrowseText(bc, st, text)
+		return handleBrowseText(bc, st, text) || fallbackHome(bc, text)
 	case "ai":
-		return handleAIText(bc, st, text)
+		return handleAIText(bc, st, text) || fallbackHome(bc, text)
 	case "confess":
-		return handleConfessText(bc, st, text)
+		return handleConfessText(bc, st, text) || fallbackHome(bc, text)
 	case "support":
-		return handleSupportText(bc, st, text)
+		return handleSupportText(bc, st, text) || fallbackHome(bc, text)
 	case "discount":
-		return handleDiscountText(bc, st, text)
+		return handleDiscountText(bc, st, text) || fallbackHome(bc, text)
 	case "home":
-		return handleHome(bc, st, text)
+		return handleHome(bc, st, text) || fallbackHome(bc, text)
 	default:
-		// reconcile unknown scene → home
-		goHome(bc, ttext(bc, "home.welcome", "خوش اومدی! 👋\nچیکار برات انجام بدم؟"))
-		return true
+		return fallbackHome(bc, text)
 	}
 }
 
@@ -538,11 +629,18 @@ func (t *Template) HandleMedia(bc *engine.BotContext, msg *telegram.Message) boo
 	}
 
 	if step(bc) != "setavatar" {
-		return false
+		// media outside an upload step is dead input — land home with the menu
+		// instead of the bare "متوجه نشدم" reply with no keyboard. Onboarding
+		// keeps its funnel (the step prompt re-prompts below instead).
+		if scene(bc) == "setup" {
+			return false
+		}
+		return fallbackHome(bc, "")
 	}
 	fileID := msg.PhotoFileID()
 	if fileID == "" {
-		return false
+		bc.ReplyKBD("فقط عکس بفرست یا «⏭ رد شد» رو بزن.", [][]string{{"⏭ رد شد"}})
+		return true
 	}
 	st := storeOf(bc)
 	if st == nil {
@@ -631,7 +729,7 @@ func handleHome(bc *engine.BotContext, st *Store, text string) bool {
 		return true
 
 	case "🏠 منوی اصلی":
-		goHome(bc, "🏠 منوی اصلی")
+		goHome(bc, ttext(bc, "home.welcome", "خوش اومدی! 👋\nچیکار برات انجام بدم؟"))
 		return true
 
 	case "💰 سکه":
@@ -688,6 +786,9 @@ func startSearch(bc *engine.BotContext, st *Store, genderFilter string) bool {
 	}
 	ctx := engineBG()
 	botID := botUUID(bc)
+	if denyIfDeactivated(bc, st, botID) {
+		return true
+	}
 	p, err := st.Profile(ctx, botID, bc.UserID)
 	if err != nil {
 		bc.Reply("خطا رخ داد. /start بزن.")
@@ -822,12 +923,12 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 	botID := botUUID(bc)
 
 	// a blocked user can still leave the chat, but cannot send messages
-	if text != "🛑 قطع مکالمه" && text != "🚫 بلاک" && denyIfBlocked(bc, st) {
+	if text != "🛑 قطع مکالمه" && text != "🚫 بلاک" && text != "🏠 منوی اصلی" && denyIfBlocked(bc, st) {
 		return true
 	}
 
 	switch text {
-	case "🛑 قطع مکالمه":
+	case "🛑 قطع مکالمه", "🏠 منوی اصلی":
 		p, err := st.Profile(ctx, botID, bc.UserID)
 		if err != nil || p.PartnerUserID == nil {
 			bc.State["scene"] = "home"
@@ -849,13 +950,15 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 			_, _ = bc.SendKBDToPlatform(partnerPlatform, partnerTelegram,
 				"🚫 مخاطب بلاک شد.\nمکالمه شما پایان یافت.\nبه مخاطبت امتیاز بده:",
 				ratingRows)
-			// notify rating scene on partner side: set scene via... partner state lives in DB;
-			// partner's next message will hit reconcile → pending rate.
 		}
-		if err := st.BlockAndEnd(ctx, botID, bc.UserID, *p.PartnerUserID); err != nil {
+		blockedID := *p.PartnerUserID
+		if err := st.BlockAndEnd(ctx, botID, bc.UserID, blockedID); err != nil {
 			bc.ReplyKBD("خطا در بلاک. دوباره تلاش کن.", chatRows)
 			return true
 		}
+		// the partner's chat just died — land them in the rating scene so
+		// their rating press doesn't hit the dead-chat path
+		_ = st.SetScene(ctx, bc.BotID, blockedID, "rating")
 		bc.State["scene"] = "home"
 		bc.SaveState()
 		goHome(bc, "🚫 مخاطب بلاک شد.\n🏠 منوی اصلی")

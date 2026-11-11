@@ -94,6 +94,40 @@ func TestMultiChannelMissionFlow(t *testing.T) {
 	}
 }
 
+// TestChannelMissionKatTrustsTap: Kat has no getChatMember, so the membership
+// check must not even run there — the confirmation tap pays the bonus (the
+// join link is right above the button). Telegram keeps the real check.
+func TestChannelMissionKatTrustsTap(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.platA = "kat"
+	ctx := context.Background()
+	e.prices = map[string]any{
+		"channels":      []any{map[string]any{"id": "@ashna_dating", "title": "آشنا دیتینگ", "link": "https://t.me/ashna_dating"}},
+		"channel_bonus": float64(10),
+	}
+
+	checked := 0
+	e.eng.SetData("channelcheck", ChannelChecker(func(_ uuid.UUID, _ string, _ int64) (string, error) {
+		checked++
+		return "left", nil // even a rejecting checker must not be consulted on Kat
+	}))
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	e.feedCB(t, e.sendA, "act:mission:channel")
+	if checked != 0 {
+		t.Fatalf("kat must not consult the membership checker, checked=%d", checked)
+	}
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "تایید شد") {
+		t.Fatalf("kat tap must confirm the mission: %+v", e.sendA.sent)
+	}
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	if pA.ChannelBonusAt == nil {
+		t.Fatalf("bonus must be recorded on kat: %+v", pA)
+	}
+}
+
 // --- P4: one-sided superlike notification ---
 
 // TestOneSidedSuperlikeNotifiesRecipient: A superlikes B without a mutual
@@ -130,9 +164,180 @@ func TestOneSidedSuperlikeNotifiesRecipient(t *testing.T) {
 	if msg := e.sendA.lastTo(222); msg == nil || !contains(msg.Text, "سوپرلایک زد") {
 		t.Fatalf("recipient must be notified of superlike: %+v", e.sendA.sent)
 	}
-	// sender confirmation edits the card in place (finishCard → Edit)
-	if msg := e.sendA.lastEditTo(111); msg == nil || !contains(msg.Text, "سوپرلایک ثبت شد") {
-		t.Fatalf("sender must get superlike confirmation: %+v", e.sendA.edits)
+	// the old card is deleted when the deck advances (no edited stub left)
+	if len(e.sendA.deletes) == 0 {
+		t.Fatalf("sender card must be deleted after superlike: %+v", e.sendA.sent)
+	}
+	if msg := e.sendA.lastEditTo(111); msg != nil && contains(msg.Text, "سوپرلایک ثبت شد") {
+		t.Fatalf("superlike confirmation must not linger as an edited card: %+v", e.sendA.edits)
+	}
+}
+
+// TestBlockEndLandsPartnerOnRating: B blocks A; A's star press must register
+// the rating even though A never navigated anywhere (live bug: A's scene was
+// left at "chat" so the star hit the dead-chat path and the rating was lost).
+func TestBlockEndLandsPartnerOnRating(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendA, "act:browse:chat")
+
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
+		t.Fatalf("direct chat must connect: A=%s B=%s", pA.Status, pB.Status)
+	}
+
+	e.feed(t, e.sendB, "🚫 بلاک")
+
+	// the notice is sent to A during B's update — it lands on B's sender
+	// with A's chat id
+	if msg := e.sendB.lastTo(111); msg == nil || !contains(msg.Text, "بلاک") {
+		t.Fatalf("A must be told the chat is over: %+v", e.sendB.sent)
+	}
+
+	// A rates straight away — must land despite the stale scene
+	e.feed(t, e.sendA, "⭐⭐⭐⭐⭐")
+
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.TotalRatings != 1 || pB.RatingSum != 5 {
+		t.Fatalf("A's rating must be applied to B: B=%+v", pB)
+	}
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "ثبت شد") {
+		t.Fatalf("A must get the rating confirmation: %+v", e.sendA.sent)
+	}
+}
+
+// TestRatingReconcileFromStaleScene: pending rate + a scene that never
+// flipped to "rating" (home here) — a star press must still apply.
+func TestRatingReconcileFromStaleScene(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if err := e.store.Repo().SetPendingRate(ctx, e.botID, pA.UserID, pB.UserID); err != nil {
+		t.Fatalf("set pending: %v", err)
+	}
+	_ = e.store.SetScene(ctx, e.botID.String(), pA.UserID, "home")
+
+	e.feed(t, e.sendA, "⭐⭐⭐⭐⭐")
+
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.TotalRatings != 1 || pB.RatingSum != 5 {
+		t.Fatalf("rating must land from a stale scene: B=%+v", pB)
+	}
+}
+
+// TestDeleteAccountFlow: 3-coin «حذف حساب» hides the profile from the deck,
+// refuses browse while deactivated, and reactivate brings it all back.
+func TestDeleteAccountFlow(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+
+	// B is in A's deck
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "سارا") {
+		t.Fatalf("A must see B first: %+v", e.sendA.sent)
+	}
+	e.feedCB(t, e.sendA, "act:browse:exit")
+
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	coinsBefore := pB.Coins
+
+	e.feedCB(t, e.sendB, "act:account:delete")
+	e.feedCB(t, e.sendB, "act:account:delete:yes")
+
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.DeactivatedAt == nil {
+		t.Fatal("B must be deactivated after confirming")
+	}
+	if pB.Coins != coinsBefore-3 {
+		t.Fatalf("delete must cost 3 coins: before=%d after=%d", coinsBefore, pB.Coins)
+	}
+
+	// B is out of A's deck
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "باقی نمونده") {
+		t.Fatalf("A's deck must be empty after B deleted: %+v", e.sendA.sent)
+	}
+	e.feedCB(t, e.sendA, "act:browse:exit")
+
+	// B can't browse either
+	e.feed(t, e.sendB, "💘 مرور پروفایل‌ها")
+	if msg := e.sendB.lastTo(222); msg == nil || !contains(msg.Text, "غیرفعال") {
+		t.Fatalf("B must be refused while deactivated: %+v", e.sendB.sent)
+	}
+
+	// reactivate restores the deck
+	e.feedCB(t, e.sendB, "act:account:reactivate")
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.DeactivatedAt != nil {
+		t.Fatal("reactivate must clear the flag")
+	}
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "سارا") {
+		t.Fatalf("B must be back in the deck: %+v", e.sendA.sent)
+	}
+}
+
+// TestDeleteAccountEndsLiveChat: deleting mid-chat ends the chat for both
+// sides and the partner is asked to rate the leaver.
+func TestDeleteAccountEndsLiveChat(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendA, "act:browse:chat")
+
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
+		t.Fatalf("direct chat must connect: A=%s B=%s", pA.Status, pB.Status)
+	}
+
+	// B deletes their account mid-chat
+	e.feedCB(t, e.sendB, "act:account:delete")
+	e.feedCB(t, e.sendB, "act:account:delete:yes")
+
+	pA, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pA.Status != domain.DatingJoined || pB.Status != domain.DatingJoined {
+		t.Fatalf("chat must end for both: A=%s B=%s", pA.Status, pB.Status)
+	}
+	if pB.DeactivatedAt == nil {
+		t.Fatal("B must be deactivated")
+	}
+	// A was left in the rating scene and rates the leaver (the prompt is sent
+	// during B's delete action — recorded on B's sender)
+	if msg := e.sendB.lastTo(111); msg == nil || !contains(msg.Text, "امتیاز بده") {
+		t.Fatalf("A must be asked to rate: %+v", e.sendB.sent)
+	}
+	e.feed(t, e.sendA, "⭐⭐⭐⭐⭐")
+	pB, _ = e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.TotalRatings != 1 {
+		t.Fatalf("A's rating must be applied to B: B=%+v", pB)
 	}
 }
 

@@ -185,6 +185,12 @@ type SendPhotoPayload struct {
 	ReplyMarkup json.RawMessage `json:"reply_markup,omitempty"`
 }
 
+// DeleteMessagePayload removes a message (bots may delete their own).
+type DeleteMessagePayload struct {
+	ChatID    int64 `json:"chat_id"`
+	MessageID int64 `json:"message_id"`
+}
+
 type EditMessageTextPayload struct {
 	ChatID      int64           `json:"chat_id"`
 	MessageID   int64           `json:"message_id"`
@@ -207,6 +213,16 @@ type AnswerCallbackPayload struct {
 	CallbackQueryID string `json:"callback_query_id"`
 	Text            string `json:"text,omitempty"`
 	ShowAlert       bool   `json:"show_alert,omitempty"`
+}
+
+// BotCommand is one entry of the platform ☰ menu (setMyCommands).
+type BotCommand struct {
+	Command     string `json:"command"`     // 1-32 chars, lowercase letters/digits/_
+	Description string `json:"description"` // 3-256 chars
+}
+
+type SetMyCommandsPayload struct {
+	Commands []BotCommand `json:"commands"`
 }
 
 type APIResponse struct {

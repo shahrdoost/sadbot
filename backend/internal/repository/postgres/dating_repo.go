@@ -20,11 +20,11 @@ type DatingRepo struct {
 
 func NewDatingRepo(db *pgxpool.Pool) *DatingRepo { return &DatingRepo{db: db} }
 
-const datingCols = `bot_id, user_id, platform, telegram_id, name, gender, age, province, city, interests, status, partner_user_id, rating, total_ratings, rating_sum, last_seen_at, coins, channel_bonus_at, photo_file_id, avatar_bonus_at, is_ghost, ghost_persona, ai_free_used, last_notified_at, notify_sent_on, notify_count_on, notify_dismissed_at, streak_count, streak_best, streak_last_date, boosted_until, name_edited_at, profile_edited_at`
+const datingCols = `bot_id, user_id, platform, telegram_id, name, gender, age, province, city, interests, status, partner_user_id, rating, total_ratings, rating_sum, last_seen_at, coins, channel_bonus_at, photo_file_id, avatar_bonus_at, is_ghost, ghost_persona, ai_free_used, last_notified_at, notify_sent_on, notify_count_on, notify_dismissed_at, streak_count, streak_best, streak_last_date, boosted_until, name_edited_at, profile_edited_at, deactivated_at`
 
 func scanDating(row pgx.Row) (*domain.DatingProfile, error) {
 	p := &domain.DatingProfile{}
-	err := row.Scan(&p.BotID, &p.UserID, &p.Platform, &p.TelegramID, &p.Name, &p.Gender, &p.Age, &p.Province, &p.City, &p.Interests, &p.Status, &p.PartnerUserID, &p.Rating, &p.TotalRatings, &p.RatingSum, &p.LastSeenAt, &p.Coins, &p.ChannelBonusAt, &p.PhotoFileID, &p.AvatarBonusAt, &p.IsGhost, &p.GhostPersona, &p.AIFreeUsed, &p.LastNotifiedAt, &p.NotifySentOn, &p.NotifyCountOn, &p.NotifyDismissedAt, &p.StreakCount, &p.StreakBest, &p.StreakLastDate, &p.BoostedUntil, &p.NameEditedAt, &p.ProfileEditedAt)
+	err := row.Scan(&p.BotID, &p.UserID, &p.Platform, &p.TelegramID, &p.Name, &p.Gender, &p.Age, &p.Province, &p.City, &p.Interests, &p.Status, &p.PartnerUserID, &p.Rating, &p.TotalRatings, &p.RatingSum, &p.LastSeenAt, &p.Coins, &p.ChannelBonusAt, &p.PhotoFileID, &p.AvatarBonusAt, &p.IsGhost, &p.GhostPersona, &p.AIFreeUsed, &p.LastNotifiedAt, &p.NotifySentOn, &p.NotifyCountOn, &p.NotifyDismissedAt, &p.StreakCount, &p.StreakBest, &p.StreakLastDate, &p.BoostedUntil, &p.NameEditedAt, &p.ProfileEditedAt, &p.DeactivatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +262,15 @@ func (r *DatingRepo) ApplyRating(ctx context.Context, botID uuid.UUID, targetUse
 	return err
 }
 
+// SetDeactivated marks the account deactivated (at != nil) or active again
+// (at == nil). Deactivation is a soft flag: data stays, the profile just
+// leaves the search/browse pool.
+func (r *DatingRepo) SetDeactivated(ctx context.Context, botID uuid.UUID, userID int64, at *time.Time) error {
+	_, err := r.db.Exec(ctx, `UPDATE dating_profiles SET deactivated_at = $3 WHERE bot_id = $1 AND user_id = $2`,
+		botID, userID, at)
+	return err
+}
+
 // --- blocks ---
 
 func (r *DatingRepo) Block(ctx context.Context, botID uuid.UUID, blockerID, blockedID int64, ttl time.Duration) error {
@@ -317,7 +326,7 @@ func (r *DatingRepo) Searchers(ctx context.Context, botID uuid.UUID) ([]DatingSe
 		       sq.created_at
 		FROM dating_profiles p
 		JOIN dating_search_requests sq ON sq.bot_id = p.bot_id AND sq.user_id = p.user_id
-		WHERE p.bot_id = $1 AND p.status = 'searching'`, botID)
+		WHERE p.bot_id = $1 AND p.status = 'searching' AND p.deactivated_at IS NULL`, botID)
 	if err != nil {
 		return nil, err
 	}
@@ -493,6 +502,7 @@ func (r *DatingRepo) BrowseCandidatesFiltered(ctx context.Context, botID uuid.UU
 		SELECT `+datingCols+` FROM dating_profiles p
 		WHERE p.bot_id = $1 AND p.user_id <> $2 AND p.status = 'joined'
 			AND NOT p.is_ghost
+			AND p.deactivated_at IS NULL
 			AND p.name IS NOT NULL AND p.name <> '' AND p.gender IS NOT NULL
 			AND ($3 = '' OR p.gender = $3)
 			AND ($5 = '' OR p.province = $5)
@@ -664,6 +674,7 @@ type DatingUserCard struct {
 	TotalRatings *int      `json:"total_ratings,omitempty"`
 	IsGhost      bool      `json:"is_ghost"`
 	GhostPersona *string   `json:"ghost_persona,omitempty"`
+	HasPhoto     bool      `json:"has_photo"`
 }
 
 // UserCards lists bot end users joined with dating profiles (panel UsersTab).
@@ -688,12 +699,13 @@ func (r *DatingRepo) UserCards(ctx context.Context, botID uuid.UUID, q string, p
 	}
 	rows, err := r.db.Query(ctx, `
 		SELECT u.id, u.telegram_id, u.platform, u.username, u.first_name, u.last_seen_at,
-		       p.status, p.coins, p.rating, p.total_ratings, COALESCE(p.is_ghost, false), p.ghost_persona
+		       p.status, p.coins, p.rating, p.total_ratings, COALESCE(p.is_ghost, false), p.ghost_persona,
+		       COALESCE(p.photo_file_id <> '', false)
 		FROM bot_end_users u
 		LEFT JOIN dating_profiles p ON p.bot_id = u.bot_id AND p.user_id = u.id
 		WHERE u.bot_id = $1 AND ($2 = '' OR u.telegram_id::text = $2 OR u.username ILIKE $3 OR u.first_name ILIKE $3)
 		  AND ($4 = false OR COALESCE(p.is_ghost, false))
-		ORDER BY u.last_seen_at DESC
+		ORDER BY u.first_seen_at DESC, u.id DESC
 		LIMIT $5 OFFSET $6`,
 		botID, q, like, ghostOnly, size, offset)
 	if err != nil {
@@ -704,7 +716,7 @@ func (r *DatingRepo) UserCards(ctx context.Context, botID uuid.UUID, q string, p
 	for rows.Next() {
 		var c DatingUserCard
 		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.Platform, &c.Username, &c.FirstName, &c.LastSeenAt,
-			&c.Status, &c.Coins, &c.Rating, &c.TotalRatings, &c.IsGhost, &c.GhostPersona); err != nil {
+			&c.Status, &c.Coins, &c.Rating, &c.TotalRatings, &c.IsGhost, &c.GhostPersona, &c.HasPhoto); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, c)
@@ -1071,6 +1083,7 @@ type UserDetail struct {
 	BoostedUntil     *time.Time   `json:"boosted_until,omitempty"`
 	ProfileBlockedAt *time.Time   `json:"profile_blocked_at,omitempty"`
 	BlockedReason    *string      `json:"blocked_reason,omitempty"`
+	HasPhoto         bool         `json:"has_photo"`
 	LikesSent        int          `json:"likes_sent"`
 	LikesReceived    int          `json:"likes_received"`
 	Payments         []PaymentRow `json:"payments"`
@@ -1105,7 +1118,8 @@ func (r *DatingRepo) UserDetail(ctx context.Context, botID uuid.UUID, userID int
 		       p.user_id IS NOT NULL,
 		       p.name, p.gender, p.age, p.city, p.status, p.partner_user_id,
 		       p.coins, p.rating, p.total_ratings, p.streak_count, p.streak_best,
-		       p.boosted_until, p.blocked_at, p.blocked_reason
+		       p.boosted_until, p.blocked_at, p.blocked_reason,
+		       COALESCE(p.photo_file_id <> '', false)
 		FROM bot_end_users u
 		LEFT JOIN dating_profiles p ON p.bot_id = u.bot_id AND p.user_id = u.id
 		WHERE u.bot_id = $1 AND u.id = $2`,
@@ -1115,7 +1129,7 @@ func (r *DatingRepo) UserDetail(ctx context.Context, botID uuid.UUID, userID int
 		&d.HasProfile,
 		&d.Name, &d.Gender, &d.Age, &d.City, &d.Status, &d.PartnerUserID,
 		&d.Coins, &d.Rating, &d.TotalRatings, &d.StreakCount, &d.StreakBest,
-		&d.BoostedUntil, &d.ProfileBlockedAt, &d.BlockedReason)
+		&d.BoostedUntil, &d.ProfileBlockedAt, &d.BlockedReason, &d.HasPhoto)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("user not found")
 	}

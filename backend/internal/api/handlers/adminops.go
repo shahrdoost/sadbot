@@ -53,6 +53,22 @@ func (h *AdminOpsHandler) UserDetail(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, d)
 }
 
+// UserPhoto serves the user's uploaded profile photo as an image.
+func (h *AdminOpsHandler) UserPhoto(w http.ResponseWriter, r *http.Request) {
+	botID, userID, ok := adminUserID(w, r)
+	if !ok {
+		return
+	}
+	data, mime, err := h.svc.UserPhoto(r.Context(), botID, userID)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, "عکسی موجود نیست")
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = w.Write(data)
+}
+
 // AdjustCoins credits or debits coins for one user.
 func (h *AdminOpsHandler) AdjustCoins(w http.ResponseWriter, r *http.Request) {
 	botID, userID, ok := adminUserID(w, r)

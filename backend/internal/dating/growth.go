@@ -66,7 +66,7 @@ func showBoost(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 		return cost
 	}
 	bc.ReplyInline(
-		"🚀 بوست پروفایل"+active+"\n━━━━━━━━━━━━━━\n\n"+
+		"🚀 بوست پروفایل"+active+"\n\n"+
 			"پروفایلت بالای فید مرور دیگران قرار می‌گیره.\n\n"+
 			fmt.Sprintf("• ۱ ساعت: %d سکه\n", price("boost_1h_coins", 2))+
 			fmt.Sprintf("• ۶ ساعت: %d سکه\n", price("boost_6h_coins", 5))+

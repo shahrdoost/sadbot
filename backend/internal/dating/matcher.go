@@ -384,6 +384,7 @@ func chatKeyboard() json.RawMessage {
 	return mustKBD([][]string{
 		{"🛑 قطع مکالمه"},
 		{"🚫 بلاک"},
+		{"🏠 منوی اصلی"},
 	})
 }
 

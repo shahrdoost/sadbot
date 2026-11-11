@@ -138,6 +138,7 @@ var (
 	_ engine.Sender         = (*TelegramSender)(nil)
 	_ engine.PhotoSender    = (*TelegramSender)(nil)
 	_ engine.MediaForwarder = (*TelegramSender)(nil)
+	_ engine.MessageDeleter = (*TelegramSender)(nil)
 )
 
 func (s *TelegramSender) Send(ctx context.Context, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error) {
@@ -172,6 +173,15 @@ func (s *TelegramSender) EditCaption(ctx context.Context, chatID, msgID int64, t
 		ChatID: chatID, MessageID: msgID, Caption: text, ReplyMarkup: kbd,
 	})
 	return err
+}
+
+// Delete satisfies engine.MessageDeleter so browse cards can be removed
+// when the deck advances (bots may delete their own messages on both
+// Telegram and the Kat subset).
+func (s *TelegramSender) Delete(ctx context.Context, chatID, msgID int64) error {
+	return s.client.DeleteMessage(ctx, telegram.DeleteMessagePayload{
+		ChatID: chatID, MessageID: msgID,
+	})
 }
 
 // ForwardMedia satisfies engine.MediaForwarder so the dating chat can relay
@@ -361,6 +371,15 @@ func (m *Manager) startPlatform(ctx context.Context, bot *domain.Bot, platform s
 			m.failed[key] = struct{}{} // only an interactive Start() clears this
 		}
 		return fmt.Errorf("start %s: %w", platform, err)
+	}
+	// register the ☰ command menu so users see real commands, not
+	// platform placeholder buttons («دکمه یک»/«دکمه دو» on empty menus).
+	if tpl, ok := m.engine.TemplateFor(bot.TemplateKey); ok {
+		if cmd, ok := tpl.(engine.Commander); ok {
+			if err := client.SetMyCommands(ctx, cmd.BotCommands()); err != nil {
+				log.Printf("[runtime] bot %s @%s setMyCommands: %v", bot.Name, platform, err)
+			}
+		}
 	}
 
 	rtCtx, cancel := context.WithCancel(context.Background())

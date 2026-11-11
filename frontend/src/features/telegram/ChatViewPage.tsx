@@ -29,6 +29,11 @@ function ChatAvatar({ accountId, chatId, title, className = 'w-11 h-11 text-base
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((r) => {
+        if (r.status === 401) {
+          localStorage.removeItem('sadbot_token')
+          window.location.assign('/login')
+          throw new Error('auth')
+        }
         if (!r.ok) throw new Error('no photo')
         return r.blob()
       })
@@ -97,6 +102,11 @@ function PhotoMessage({ accountId, chatId, msg }: { accountId: string; chatId: s
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((r) => {
+        if (r.status === 401) {
+          localStorage.removeItem('sadbot_token')
+          window.location.assign('/login')
+          throw new Error('auth')
+        }
         if (!r.ok) throw new Error('fetch failed')
         return r.blob()
       })

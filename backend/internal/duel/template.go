@@ -567,7 +567,7 @@ func (t *Template) doBuyEnergy(bc *engine.BotContext, repo *postgres.DuelRepo, b
 		msg := bc.Text("payment_link")
 		msg = strings.ReplaceAll(msg, "{link}", payURL)
 		bc.ReplyInline(msg, [][]engine.InlineButton{
-			{{Label: "✅ بررسی پرداخت", Callback: "act:pay:verify"}},
+			{{Label: "💳 پرداخت", URL: payURL}},
 			{{Label: "🏠 منو", Callback: "act:menu"}},
 		})
 		return

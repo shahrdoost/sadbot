@@ -42,11 +42,13 @@ type pendSend struct {
 	onDone   func(*telegram.Message) // nil for side-effect-only sends
 	attempts int
 	next     time.Time
+	gen      int64 // queue generation; resetPending() orphans older in-flight items
 }
 
 var (
 	pendMu   sync.Mutex
 	pend     []*pendSend
+	pendGen  int64
 	pendWake = make(chan struct{}, 1)
 	pendOnce sync.Once
 )
@@ -65,6 +67,7 @@ func enqueuePending(label string, send func() (*telegram.Message, error), onDone
 		send:   send,
 		onDone: onDone,
 		next:   time.Now(), // the sync attempt already failed; retry at once
+		gen:    pendGen,
 	})
 	pendMu.Unlock()
 	pendOnce.Do(func() { go pendingRunner() })
@@ -124,6 +127,12 @@ func flushPending(now time.Time) {
 			// attempt just made, so the next wait is schedule[attempts-1]
 			item.next = now.Add(pendRetrySchedule[item.attempts-1])
 			pendMu.Lock()
+			if item.gen != pendGen {
+				// resetPending() ran mid-flight: this item belongs to a
+				// cleared generation and must not resurrect in the queue
+				pendMu.Unlock()
+				continue
+			}
 			if len(pend) < pendCap {
 				pend = append(pend, item)
 			} else {
@@ -143,6 +152,7 @@ func pendingCount() int {
 
 func resetPending() {
 	pendMu.Lock()
+	pendGen++
 	pend = nil
 	pendMu.Unlock()
 }

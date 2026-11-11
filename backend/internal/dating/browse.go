@@ -50,12 +50,12 @@ func browseCaption(t *domain.DatingProfile, likeCost, freeLeft int, subscribed b
 	if t.Age != nil {
 		age = strconv.Itoa(*t.Age)
 	}
-	genderFA := ""
+	genderLine := ""
 	if t.Gender != nil {
 		if *t.Gender == "female" {
-			genderFA = " 👩"
+			genderLine = "👩 خانم\n"
 		} else {
-			genderFA = " 👨"
+			genderLine = "👨 آقا\n"
 		}
 	}
 	city := ""
@@ -72,9 +72,9 @@ func browseCaption(t *domain.DatingProfile, likeCost, freeLeft int, subscribed b
 	}
 
 	var sb strings.Builder
-	sb.WriteString("━━━━━━━━━━━━━━━━\n")
-	sb.WriteString("💕 " + name + genderFA + "\n")
+	sb.WriteString(name + "\n")
 	sb.WriteString("🎂 " + age + " ساله\n")
+	sb.WriteString(genderLine)
 	if city != "" || province != "" {
 		sb.WriteString(city + province + "\n")
 	}
@@ -89,7 +89,7 @@ func browseCaption(t *domain.DatingProfile, likeCost, freeLeft int, subscribed b
 		sb.WriteString("🎯 " + strings.Join(shown, " · ") + "\n")
 	}
 
-	sb.WriteString("━━━━━━━━━━━━━━━━\n")
+	sb.WriteString("\n")
 	switch {
 	case subscribed:
 		sb.WriteString("💎 لایک رایگان (پریموم)")
@@ -127,6 +127,9 @@ func startBrowse(bc *engine.BotContext, st *Store) bool {
 	if denyIfBlocked(bc, st) {
 		return true
 	}
+	if denyIfDeactivated(bc, st, botUUID(bc)) {
+		return true
+	}
 	clearBrowseFilters(bc)
 	bc.State["scene"] = "browse"
 	bc.State["step"] = ""
@@ -139,6 +142,9 @@ func startBrowse(bc *engine.BotContext, st *Store) bool {
 // "any" keeps the default opposite-gender baseline.
 func startFilteredBrowse(bc *engine.BotContext, st *Store, gender, province, city string, interests []string, ageMin, ageMax int) bool {
 	if denyIfBlocked(bc, st) {
+		return true
+	}
+	if denyIfDeactivated(bc, st, botUUID(bc)) {
 		return true
 	}
 	data := dataMap(bc)
@@ -214,6 +220,7 @@ func showNextCard(bc *engine.BotContext, st *Store) bool {
 		bc.Reply("خطا در مرور پروفایل‌ها. دوباره تلاش کن.")
 		return true
 	}
+	prevCard := stateInt(data["browse_card_msg"])
 	if len(cands) == 0 {
 		delete(data, "browse_target")
 		clearBrowseFilters(bc)
@@ -251,6 +258,15 @@ func showNextCard(bc *engine.BotContext, st *Store) bool {
 		}
 	}
 	if msgID > 0 {
+		// the engine's viewDrop already replaced the tracked previous screen
+		// as part of this send; the extra delete covers a card left untracked
+		// by legacy state. Only runs when the new card actually landed — a
+		// failed send must never leave the chat empty.
+		if prevCard > 0 && int64(prevCard) != msgID {
+			if d, ok := bc.Sender.(engine.MessageDeleter); ok {
+				_ = d.Delete(ctx, bc.ChatID, int64(prevCard))
+			}
+		}
 		data["browse_card_msg"] = msgID
 		if isPhoto {
 			data["browse_card_photo"] = true
@@ -266,10 +282,10 @@ func showNextCard(bc *engine.BotContext, st *Store) bool {
 // reply keyboard stays visible (cards use inline buttons), so home-menu
 // labels must navigate instead of advancing the deck.
 func handleBrowseText(bc *engine.BotContext, st *Store, text string) bool {
-	// home-menu labels are routed by the central guard in HandleMessage;
-	// any other text advances the deck — close the old card first so its
-	// buttons don't stay live on a stale message.
-	finishCard(bc, "➡️ رد شد")
+	// home-menu labels are routed by the central guard in HandleMessage; any
+	// other text advances the deck. The next card's send replaces this one in
+	// place (engine viewDrop) — a failed send must leave the card on screen,
+	// never an empty chat.
 	return showNextCard(bc, st)
 }
 
@@ -279,9 +295,8 @@ func handleBrowseAction(bc *engine.BotContext, st *Store, action string) bool {
 	case "browse":
 		return startBrowse(bc, st)
 	case "browse:exit":
-		finishCard(bc, "🏠 منوی اصلی")
 		clearBrowseFilters(bc)
-		goHome(bc, "🏠 منوی اصلی")
+		goHome(bc, "🏠 منوی اصلی") // replaces the card in place
 		return true
 	case "browse:next":
 		return browsePass(bc, st)
@@ -314,15 +329,14 @@ func browsePass(bc *engine.BotContext, st *Store) bool {
 	if target, ok := browseTarget(bc); ok {
 		_, _ = st.Repo().InsertLike(ctx, botID, bc.UserID, target, "pass")
 	}
-	finishCard(bc, "➡️ رد شد")
+	// the next card replaces this one in place; if its send fails the card
+	// stays (its buttons keep working) instead of leaving an empty chat
 	return showNextCard(bc, st)
 }
 
-// finishCard edits the on-screen browse card to remove its buttons. Prefers
-// the tracked card message id (reply-keyboard exits arrive as text messages
-// whose MsgID points at the user's message, not the card). Photo cards must
-// be edited via caption — editMessageText is rejected for media.
-func finishCard(bc *engine.BotContext, text string) {
+// keepCardNote replaces the card with a short notice the user must read
+// (warnings). The message stays: the next card appears right below it.
+func keepCardNote(bc *engine.BotContext, text string) {
 	data := dataMap(bc)
 	msgID := stateInt(data["browse_card_msg"])
 	if msgID == 0 {
@@ -331,9 +345,17 @@ func finishCard(bc *engine.BotContext, text string) {
 	isPhoto, _ := data["browse_card_photo"].(bool)
 	delete(data, "browse_card_msg")
 	delete(data, "browse_card_photo")
+	// the notice replaces the card in place and stays — stop tracking it
+	bc.UntrackView()
 	if msgID <= 0 {
 		return
 	}
+	editCardDown(bc, msgID, isPhoto, text)
+}
+
+// editCardDown edits a card in place; photo cards must go through caption —
+// editMessageText is rejected for media.
+func editCardDown(bc *engine.BotContext, msgID int, isPhoto bool, text string) {
 	if isPhoto {
 		if ce, ok := bc.Sender.(engine.CaptionEditor); ok {
 			_ = ce.EditCaption(engineBG(), bc.ChatID, int64(msgID), text, nil)
@@ -359,7 +381,7 @@ func browseReact(bc *engine.BotContext, st *Store, kind string) bool {
 		cap := bc.PriceInt("superlike_daily_cap", 3)
 		supers, _ := st.Repo().CountSuperSince(ctx, botID, bc.UserID, dayStart())
 		if supers >= cap {
-			finishCard(bc, "⚠️ امروز سقف سوپرلایک ("+strconv.Itoa(cap)+") تموم شد.")
+			keepCardNote(bc, "⚠️ امروز سقف سوپرلایک ("+strconv.Itoa(cap)+") تموم شد.")
 			return showNextCard(bc, st)
 		}
 		cost = bc.PriceInt("superlike_cost", 3) // superlike always costs (kpkchat parity)
@@ -388,7 +410,7 @@ func browseReact(bc *engine.BotContext, st *Store, kind string) bool {
 		if cost > 0 {
 			_, _ = st.Repo().AddCoins(ctx, botID, bc.UserID, cost)
 		}
-		finishCard(bc, "⚠️ قبلاً به این پروفایل واکنش دادی.")
+		keepCardNote(bc, "⚠️ قبلاً به این پروفایل واکنش دادی.")
 		return showNextCard(bc, st)
 	}
 
@@ -401,20 +423,21 @@ func browseReact(bc *engine.BotContext, st *Store, kind string) bool {
 		return connectBrowse(bc, st, target, via)
 	}
 	if kind == "super" {
-		finishCard(bc, "⭐ سوپرلایک ثبت شد! اگر طرف هم تو رو لایک کنه وصل می‌شید.")
 		// one-sided superlike: ping the recipient (kpkchat parity)
 		if tp, err := st.Profile(ctx, botID, target); err == nil && !tp.IsGhost {
 			_, _ = bc.SendToPlatform(tp.Platform, tp.TelegramID, "⭐ کسی به پروفایلت سوپرلایک زد!\nبا مرور پروفایل‌ها می‌تونی پیداش کنی.", 0)
 		}
-	} else {
-		finishCard(bc, "✅ لایک ثبت شد.")
 	}
+	// the next card replaces this one in place (engine viewDrop)
 	return showNextCard(bc, st)
 }
 
 func browseDirectChat(bc *engine.BotContext, st *Store) bool {
 	ctx := engineBG()
 	botID := botUUID(bc)
+	if denyIfDeactivated(bc, st, botID) {
+		return true
+	}
 	target, ok := browseTarget(bc)
 	if !ok {
 		goHome(bc, "کارت منقضی شد. دوباره مرور کن.")
@@ -440,7 +463,7 @@ func browseDirectChat(bc *engine.BotContext, st *Store) bool {
 		if cost > 0 {
 			_, _ = st.Repo().AddCoins(ctx, botID, bc.UserID, cost)
 		}
-		finishCard(bc, "⚠️ این نفر الان به کسی وصل شده. بعداً دوباره ببینش.")
+		keepCardNote(bc, "⚠️ این نفر الان به کسی وصل شده. بعداً دوباره ببینش.")
 		return showNextCard(bc, st)
 	}
 	// record so the card never reappears
@@ -458,7 +481,7 @@ func connectBrowse(bc *engine.BotContext, st *Store, target int64, via string) b
 		return true
 	}
 	if !ok {
-		finishCard(bc, "⚠️ این نفر الان به کسی وصل شده.")
+		keepCardNote(bc, "⚠️ این نفر الان به کسی وصل شده.")
 		return showNextCard(bc, st)
 	}
 	return notifyBrowseConnect(bc, st, target, via)
@@ -468,7 +491,6 @@ func connectBrowse(bc *engine.BotContext, st *Store, target int64, via string) b
 func notifyBrowseConnect(bc *engine.BotContext, st *Store, target int64, via string) bool {
 	ctx := engineBG()
 	botID := botUUID(bc)
-	finishCard(bc, "🎉 وصل شدید!")
 	text := ttext(bc, "match.browse", "وصل شدید! 🎉") + " (" + via + ")" + humanRules
 
 	targetProfile, err := st.Profile(ctx, botID, target)

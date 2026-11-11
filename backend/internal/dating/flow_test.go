@@ -3,8 +3,10 @@ package dating
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,9 +24,14 @@ type fakeSender struct {
 	sent     []sentMsg
 	edits    []sentMsg
 	forwards []forwardedMedia
+	deletes  []forwardedMedia
 	// forwardErr, when set, makes ForwardMedia fail (e.g. Kat's missing
 	// forwardMessage → telegram.ErrUnsupported).
 	forwardErr error
+	// sendErr / photoErr make the matching send fail (platform outage, or a
+	// Telegram file_id the Kat side cannot render).
+	sendErr  error
+	photoErr error
 }
 
 // forwardedMedia records a media relay so tests can assert who received what.
@@ -42,12 +49,42 @@ type sentMsg struct {
 }
 
 func (f *fakeSender) Send(ctx context.Context, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error) {
+	if f.sendErr != nil {
+		return nil, f.sendErr
+	}
 	f.sent = append(f.sent, sentMsg{ChatID: chatID, Text: text, ReplyTo: replyTo, ReplyMark: kbd})
 	return &telegram.Message{MessageID: int64(len(f.sent)), Chat: telegram.Chat{ID: chatID}}, nil
 }
 
+// SendPhoto satisfies engine.PhotoSender so the browse-card photo path is
+// testable (the text fallback previously hid every photo failure).
+func (f *fakeSender) SendPhoto(ctx context.Context, chatID int64, fileID, caption string, kbd json.RawMessage) (*telegram.Message, error) {
+	if f.photoErr != nil {
+		return nil, f.photoErr
+	}
+	f.sent = append(f.sent, sentMsg{ChatID: chatID, Text: caption, ReplyMark: kbd})
+	return &telegram.Message{
+		MessageID: int64(len(f.sent)),
+		Chat:      telegram.Chat{ID: chatID},
+		Photo:     []telegram.PhotoSize{{FileID: fileID}},
+	}, nil
+}
+
 func (f *fakeSender) Edit(ctx context.Context, chatID, msgID int64, text string, kbd json.RawMessage) error {
 	f.edits = append(f.edits, sentMsg{ChatID: chatID, Text: text, ReplyMark: kbd})
+	return nil
+}
+
+// EditCaption satisfies engine.CaptionEditor so photo-card close paths
+// (media rejects editMessageText) behave as they do on the real platforms.
+func (f *fakeSender) EditCaption(ctx context.Context, chatID, msgID int64, text string, kbd json.RawMessage) error {
+	f.edits = append(f.edits, sentMsg{ChatID: chatID, Text: text, ReplyMark: kbd})
+	return nil
+}
+
+// Delete satisfies engine.MessageDeleter so browse cards can be removed.
+func (f *fakeSender) Delete(ctx context.Context, chatID, msgID int64) error {
+	f.deletes = append(f.deletes, forwardedMedia{FromChatID: chatID, ToChatID: chatID, MessageID: msgID})
 	return nil
 }
 
@@ -432,6 +469,281 @@ func (e *browseEnv) onboard(t *testing.T, sender *fakeSender, name, age, gender 
 	e.feed(t, sender, "تهران")
 	e.feed(t, sender, "تهران")
 	e.feed(t, sender, gender)
+}
+
+// TestDeadButtonFallsHome: platform placeholder buttons (Kat shows
+// «دکمه یک»/«دکمه دو» when no commands are registered) must land on the
+// complete home menu, never on the bare "متوجه نشدم" reply with no keyboard.
+func TestDeadButtonFallsHome(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	for _, dead := range []string{"دکمه یک", "دکمه دو", "کلا یه چیز بی‌ربط"} {
+		e.sendA.sent = nil
+		e.feed(t, e.sendA, dead)
+		msg := e.sendA.lastTo(111)
+		if msg == nil {
+			t.Fatalf("%q: no reply", dead)
+		}
+		if !strings.Contains(msg.Text, "چیکار برات انجام بدم") {
+			t.Fatalf("%q: not the home screen: %q", dead, msg.Text)
+		}
+		for _, want := range []string{"مرور پروفایل‌ها", "سکه", "پروفایل من"} {
+			if !strings.Contains(string(msg.ReplyMark), want) {
+				t.Fatalf("%q: home keyboard missing %q: %s", dead, want, msg.ReplyMark)
+			}
+		}
+	}
+
+	// a bot-menu command must navigate like its button
+	e.sendA.sent = nil
+	e.feed(t, e.sendA, "/menu@ashna_bot")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "چیکار برات انجام بدم") {
+		t.Fatalf("/menu did not land home: %#v", e.sendA.sent)
+	}
+
+	// an unknown act:* callback lands home too
+	e.sendA.sent = nil
+	e.feedCB(t, e.sendA, "act:کلا-چیز-ناموجود")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "چیکار برات انجام بدم") {
+		t.Fatalf("unknown action did not land home: %#v", e.sendA.sent)
+	}
+}
+
+// TestChatTextIsNotSwallowed: inside an active chat free text must reach the
+// partner — the dead-input fallback may never hijack it.
+func TestChatTextIsNotSwallowed(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendA, "act:browse:like")
+	e.feed(t, e.sendB, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendB, "act:browse:like")
+
+	// outbound of an update rides that update's sender, so A's chat text to B
+	// (chat 222) is recorded on sendA
+	e.sendA.sent = nil
+	e.feed(t, e.sendA, "دکمه یک")
+	if msg := e.sendA.lastTo(222); msg == nil || msg.Text != "دکمه یک" {
+		t.Fatalf("chat text must reach the partner verbatim: %#v", e.sendA.sent)
+	}
+}
+
+// TestReplaceViewNavigation: menu screens replace each other — opening a
+// screen deletes the previous one instead of stacking («الان هی پیام جدید
+// میشه»).
+func TestReplaceViewNavigation(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	// fresh numbering: the next screen sent becomes message 1
+	e.sendA.sent = nil
+	e.sendA.deletes = nil
+
+	// wallet opens on top of the onboarding home screen → old screen goes
+	e.feed(t, e.sendA, "💰 سکه")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "کیف پول") {
+		t.Fatalf("wallet screen not shown: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) == 0 {
+		t.Fatalf("opening wallet must delete the previous screen")
+	}
+	walletID := int64(len(e.sendA.sent))
+
+	// profile replaces wallet
+	e.sendA.deletes = nil
+	e.feed(t, e.sendA, "👤 پروفایل من")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(string(msg.ReplyMark), "حذف حساب") {
+		t.Fatalf("profile screen not shown: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) != 1 || e.sendA.deletes[0].MessageID != walletID {
+		t.Fatalf("opening profile must delete wallet message %d: %#v", walletID, e.sendA.deletes)
+	}
+	profileID := int64(len(e.sendA.sent))
+
+	// home replaces profile
+	e.sendA.deletes = nil
+	e.feed(t, e.sendA, "🏠 منوی اصلی")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "چیکار برات انجام بدم") {
+		t.Fatalf("home screen not shown: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) != 1 || e.sendA.deletes[0].MessageID != profileID {
+		t.Fatalf("returning home must delete profile message %d: %#v", profileID, e.sendA.deletes)
+	}
+}
+
+// TestFailedSendKeepsPreviousView: the old screen is deleted only after its
+// replacement is on screen. A send that fails must leave the current menu
+// untouched — never «message deleted and nothing in its place» (Kat bug).
+func TestFailedSendKeepsPreviousView(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.sendA.sent = nil
+	e.sendA.deletes = nil
+
+	// first screen: wallet becomes the tracked view (message 1)
+	e.feed(t, e.sendA, "💰 سکه")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "کیف پول") {
+		t.Fatalf("wallet screen not shown: %#v", e.sendA.sent)
+	}
+	// the wallet replaced the onboarding screen (its delete is expected);
+	// from here on nothing may be deleted until a replacement lands
+	e.sendA.deletes = nil
+
+	// platform outage: the next screen's send fails → nothing may be deleted
+	e.sendA.sendErr = errors.New("platform down")
+	e.sendA.sent = nil
+	e.feed(t, e.sendA, "👤 پروفایل من")
+	if len(e.sendA.deletes) != 0 {
+		t.Fatalf("failed send deleted the previous screen: %#v", e.sendA.deletes)
+	}
+	if len(e.sendA.sent) != 0 {
+		t.Fatalf("failed send produced messages: %#v", e.sendA.sent)
+	}
+
+	// platform back: the same tap now replaces the wallet screen
+	e.sendA.sendErr = nil
+	e.feed(t, e.sendA, "👤 پروفایل من")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(string(msg.ReplyMark), "حذف حساب") {
+		t.Fatalf("profile screen not shown after recovery: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) != 1 || e.sendA.deletes[0].MessageID != 1 {
+		t.Fatalf("recovery tap must delete the wallet screen (msg 1): %#v", e.sendA.deletes)
+	}
+}
+
+// TestPhotoFailureFallsBackToTextCard: the browse card is a photo (a file_id
+// from another platform — Telegram id shown on Kat — cannot be sent there).
+// The card must fall back to the text inline card; the previous menu may only
+// disappear together with that replacement.
+func TestPhotoFailureFallsBackToTextCard(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feedPhoto(t, e.sendB, "tg-photo-1")
+
+	e.sendA.sent = nil
+	e.sendA.deletes = nil
+
+	e.sendA.photoErr = errors.New("bad file_id")
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "سارا") {
+		t.Fatalf("photo failure must fall back to the text card: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) != 1 {
+		t.Fatalf("the previous screen must be replaced exactly once: %#v", e.sendA.deletes)
+	}
+}
+
+// TestBrowseAdvanceKeepsCardOnSendFailure: advancing the deck (like/pass/text)
+// must not remove the current card unless the next one actually landed —
+// a failed send leaves the card (with live buttons) instead of an empty chat.
+func TestBrowseAdvanceKeepsCardOnSendFailure(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "ساله") {
+		t.Fatalf("first card not shown: %#v", e.sendA.sent)
+	}
+	e.sendA.sent = nil
+	e.sendA.deletes = nil
+
+	// the next advance's send fails → the card must stay untouched
+	e.sendA.sendErr = errors.New("platform down")
+	e.feedCB(t, e.sendA, "act:browse:next")
+	if len(e.sendA.deletes) != 0 {
+		t.Fatalf("failed advance deleted the card: %#v", e.sendA.deletes)
+	}
+
+	// platform back: the deck is now empty (the pass took) and the home
+	// screen replaces the card exactly when its send lands
+	e.sendA.sendErr = nil
+	e.feedCB(t, e.sendA, "act:browse:next")
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "باقی نمونده") {
+		t.Fatalf("empty-deck home not shown after recovery: %#v", e.sendA.sent)
+	}
+	if len(e.sendA.deletes) == 0 {
+		t.Fatalf("recovery screen must replace the old card: %#v", e.sendA.deletes)
+	}
+}
+
+// TestChatHomeButtonLeavesChat: the chat keyboard must offer a way back to the
+// main menu (Kat showed only قطع مکالمه/بلاک — no escape). The «🏠 منوی اصلی»
+// tap ends the chat like قطع مکالمه and must never reach the partner as text.
+func TestChatHomeButtonLeavesChat(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendA, "act:browse:like")
+	e.feed(t, e.sendB, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendB, "act:browse:like")
+
+	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 111)
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pA.Status != domain.DatingChatting || pB.Status != domain.DatingChatting {
+		t.Fatalf("precondition: both must be chatting, got %s / %s", pA.Status, pB.Status)
+	}
+
+	e.sendB.sent = nil
+	e.feed(t, e.sendA, "🏠 منوی اصلی")
+
+	// the tap ends the chat into the rating screen (same as قطع مکالمه)
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "امتیاز") {
+		t.Fatalf("home escape must end the chat into rating: %+v", e.sendA.sent)
+	}
+	// the label must never be relayed to the partner
+	for _, s := range e.sendB.sent {
+		if contains(s.Text, "منوی اصلی") {
+			t.Fatalf("home label leaked to the partner: %+v", s)
+		}
+	}
+}
+
+// TestRatingViaKatCallback: on Kat the star rows arrive as label callbacks
+// (inlineized keyboard — callback_data is the button label). The star press
+// must register the rating exactly like a typed star.
+func TestRatingViaKatCallback(t *testing.T) {
+	e := newBrowseEnv(t)
+	ctx := context.Background()
+
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+	e.onboard(t, e.sendB, "سارا", "22", "خانومم")
+	e.feed(t, e.sendB, "⏭ رد شد")
+	e.feed(t, e.sendA, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendA, "act:browse:like")
+	e.feed(t, e.sendB, "💘 مرور پروفایل‌ها")
+	e.feedCB(t, e.sendB, "act:browse:like")
+
+	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, "", 222)
+	if pB.Status != domain.DatingChatting {
+		t.Fatalf("precondition: B must be chatting, got %s", pB.Status)
+	}
+
+	// A ends the chat into the rating scene
+	e.feed(t, e.sendA, "🛑 قطع مکالمه")
+
+	// the star arrives as a callback (Kat's inlineized rating keyboard)
+	e.feedCB(t, e.sendA, "⭐⭐⭐")
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "امتیازت ثبت شد") {
+		t.Fatalf("rating via label callback must register: %+v", e.sendA.sent)
+	}
 }
 
 // TestBrowseMutualLikeFlow: A (male) likes B (female) from the deck, then B
