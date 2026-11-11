@@ -335,10 +335,11 @@ export interface SettingField {
   key: string
   label: string
   group: string
-  kind: 'int' | 'bool'
+  kind: 'int' | 'bool' | 'select'
   min: number
   max: number
   value: number
+  options?: Array<{ value: number; label: string }>
 }
 
 export interface ActiveChat {

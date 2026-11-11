@@ -1839,6 +1839,11 @@ function SettingsTab({ botId }: { botId: string }) {
     browse: '💘 مرور پروفایل',
     coldstart: '👻 کاربران جعلی',
     content: '💬 محتوا',
+    economy: '💰 اقتصاد',
+    energy: '⚡ انرژی',
+    drops: '🍬 افتادن‌ها',
+    prizes: '🏆 جوایز',
+    general: '⚙️ عمومی',
     growth: '📈 رشد',
     notify: '🔔 اعلان‌ها',
     payment: '💳 پرداخت',
@@ -1883,7 +1888,17 @@ function SettingsTab({ botId }: { botId: string }) {
               {fields.map((f) => (
                 <label key={f.key} className="block text-sm">
                   <span className="block text-slate-600 dark:text-slate-300 mb-1">{f.label}</span>
-                  {f.kind === 'bool' ? (
+                  {f.kind === 'select' ? (
+                    <select
+                      className="input"
+                      value={val(f)}
+                      onChange={(e) => setValues((v) => ({ ...v, [f.key]: Number(e.target.value) }))}
+                    >
+                      {(f.options ?? []).map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  ) : f.kind === 'bool' ? (
                     <select
                       className="input"
                       value={val(f)}
@@ -1903,9 +1918,11 @@ function SettingsTab({ botId }: { botId: string }) {
                       onChange={(e) => setValues((v) => ({ ...v, [f.key]: Number(e.target.value) }))}
                     />
                   )}
-                  <span className="block text-xs text-slate-400 dark:text-slate-500 mt-1" dir="ltr">
-                    {toFaDigits(f.min)} … {toFaDigits(f.max)}
-                  </span>
+                  {f.kind !== 'select' && (
+                    <span className="block text-xs text-slate-400 dark:text-slate-500 mt-1" dir="ltr">
+                      {toFaDigits(f.min)} … {toFaDigits(f.max)}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>

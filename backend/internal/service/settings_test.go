@@ -141,3 +141,43 @@ func TestApplySettingsBoolRoundTrip(t *testing.T) {
 		t.Fatalf("ghost_enabled = %v", got["ghost_enabled"])
 	}
 }
+
+// TestSettingsSpecPerTemplate: each template's settings form shows that
+// template's own fields — the panel used to show the dating field list for
+// every bot (welcome_menu, favaani, tapearn, …).
+func TestSettingsSpecPerTemplate(t *testing.T) {
+	dating := SettingsForTemplate("dating")
+	if len(dating) == 0 {
+		t.Fatal("dating spec empty")
+	}
+	for _, f := range dating {
+		if f.Key == "notify_default_on" {
+			t.Fatalf("dating spec must not carry welcome_menu fields: %v", f)
+		}
+	}
+
+	wm := SettingsForTemplate("welcome_menu")
+	if len(wm) != 1 || wm[0].Key != "notify_default_on" {
+		t.Fatalf("welcome_menu spec = %+v", wm)
+	}
+	if wm[0].Kind != "select" || len(wm[0].Options) != 2 {
+		t.Fatalf("welcome_menu field must be a 2-option select: %+v", wm[0])
+	}
+	if got := SettingGroupsForTemplate("welcome_menu"); len(got) != 1 || got[0] != "general" {
+		t.Fatalf("welcome_menu groups = %v", got)
+	}
+
+	// a game keeps its own spec
+	duel := SettingsForTemplate("duel")
+	if len(duel) == 0 || duel[0].Key != "max_energy" {
+		t.Fatalf("duel spec = %+v", duel)
+	}
+
+	// saving welcome_menu values must accept the menu key and reject dating keys
+	if _, err := ApplySettingsTemplate("welcome_menu", json.RawMessage(`{}`), map[string]int{"notify_default_on": 1}); err != nil {
+		t.Fatalf("welcome_menu save: %v", err)
+	}
+	if _, err := ApplySettingsTemplate("welcome_menu", json.RawMessage(`{}`), map[string]int{"signup_bonus": 5}); err == nil {
+		t.Fatal("dating keys must be rejected for welcome_menu")
+	}
+}

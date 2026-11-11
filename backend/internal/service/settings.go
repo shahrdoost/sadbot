@@ -19,6 +19,15 @@ type SettingField struct {
 	Min   int    `json:"min"`
 	Max   int    `json:"max"`
 	Value int    `json:"value"`
+	// For selects (kind "select"): the panel renders these options instead of
+	// a number input.
+	Options []SettingOption `json:"options,omitempty"`
+}
+
+// SettingOption is one choice of a select-style setting.
+type SettingOption struct {
+	Value int    `json:"value"`
+	Label string `json:"label"`
 }
 
 // settingSpec is the authoritative field list. Keys not listed here (channels,
@@ -70,6 +79,15 @@ var settingSpec = []SettingField{
 
 	{Key: "sub_price", Label: "قیمت اشتراک (ریال)", Group: "payment", Kind: "int", Min: 0, Max: 100000000},
 	{Key: "sub_discount_pct", Label: "درصد تخفیف اشتراک", Group: "payment", Kind: "int", Min: 0, Max: 100},
+}
+
+// welcomeMenuSpec is the generic menu template's own settings — the panel
+// must show these for welcome_menu bots, never the dating field list.
+var welcomeMenuSpec = []SettingField{
+	{
+		Key: "notify_default_on", Label: "حالت پیش‌فرض اعلان‌ها", Group: "general", Kind: "select", Min: 0, Max: 1,
+		Options: []SettingOption{{Value: 1, Label: "روشن"}, {Value: 0, Label: "خاموش"}},
+	},
 }
 
 // SettingsOf merges the current prices onto the field spec, returning the
@@ -146,9 +164,19 @@ func GroupedSettings(fields []SettingField) map[string][]SettingField {
 
 // SettingGroups returns the stable display order of the setting groups.
 func SettingGroups() []string {
+	return settingGroupsOf(settingSpec)
+}
+
+// SettingGroupsForTemplate returns the stable group order for a template's spec.
+func SettingGroupsForTemplate(templateKey string) []string {
+	return settingGroupsOf(SettingsForTemplate(templateKey))
+}
+
+// settingGroupsOf buckets a spec's groups in first-seen order.
+func settingGroupsOf(spec []SettingField) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, f := range settingSpec {
+	for _, f := range spec {
 		if !seen[f.Group] {
 			seen[f.Group] = true
 			out = append(out, f.Group)
@@ -211,14 +239,22 @@ func SettingsForTemplate(templateKey string) []SettingField {
 		return bomblandSpec
 	case "duel":
 		return duelSpec
+	case "welcome_menu":
+		return welcomeMenuSpec
 	default:
+		// every other template (dating, favaani, tapearn, …) — but NOT the
+		// generic menu one, which has its own spec above
 		return settingSpec
 	}
 }
 
 // SettingsOfTemplate merges prices onto the template's field spec.
 func SettingsOfTemplate(templateKey string, defaults []byte, current json.RawMessage) ([]SettingField, error) {
-	spec := SettingsForTemplate(templateKey)
+	return settingsOfSpec(SettingsForTemplate(templateKey), defaults, current)
+}
+
+// settingsOfSpec merges defaults + current prices onto the given field spec.
+func settingsOfSpec(spec []SettingField, defaults []byte, current json.RawMessage) ([]SettingField, error) {
 	base := map[string]any{}
 	if len(defaults) > 0 {
 		if err := json.Unmarshal(defaults, &base); err != nil {
@@ -248,7 +284,12 @@ func SettingsOfTemplate(templateKey string, defaults []byte, current json.RawMes
 
 // ApplySettingsTemplate validates and merges using the template's spec.
 func ApplySettingsTemplate(templateKey string, current json.RawMessage, incoming map[string]int) (json.RawMessage, error) {
-	spec := SettingsForTemplate(templateKey)
+	return applySettingsSpec(SettingsForTemplate(templateKey), current, incoming)
+}
+
+// applySettingsSpec validates incoming values against the spec and merges
+// them into the existing prices, leaving unknown keys untouched.
+func applySettingsSpec(spec []SettingField, current json.RawMessage, incoming map[string]int) (json.RawMessage, error) {
 	prices := map[string]any{}
 	if len(current) > 0 {
 		if err := json.Unmarshal(current, &prices); err != nil {

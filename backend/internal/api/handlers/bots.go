@@ -296,9 +296,15 @@ func (h *BotsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusForbidden, err.Error())
 		return
 	}
+	// group order must come from the SAME template spec as the fields
+	// (the panel used to show the dating group list for every bot)
+	templateKey := ""
+	if bot, err := h.svc.Get(r.Context(), actor, id); err == nil && bot != nil {
+		templateKey = bot.TemplateKey
+	}
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"fields": fields,
-		"groups": service.SettingGroups(),
+		"groups": service.SettingGroupsForTemplate(templateKey),
 	})
 }
 
