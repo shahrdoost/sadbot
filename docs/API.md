@@ -41,8 +41,8 @@
 | `POST /bots/{botID}/stop` | `bot:runtime` | توقف |
 | `GET /bots/{botID}/config` | `bot:config` | سند config |
 | `PUT /bots/{botID}/config` | `bot:config` | `{version, texts, menus, prices, feature_flags}` |
-| `GET /bots/{botID}/settings` | `bot:config` | تنظیمات merged |
-| `PUT /bots/{botID}/settings` | `bot:config` | بروزرسانی تنظیمات |
+| `GET /bots/{botID}/settings` | `bot:config` | تنظیمات merged — فیلدها و ترتیب گروه‌ها **از spec قالب خودِ همان بات** (نه لیست سراسری)؛ فیلد `select` گزینه‌ها را در `options` می‌آورد |
+| `PUT /bots/{botID}/settings` | `bot:config` | بروزرسانی تنظیمات (کلیدهای خارج از spec قالب رد می‌شوند) |
 | `GET /bots/{botID}/admin/channels` | `bot:config` | کانال‌ها |
 | `PUT /bots/{botID}/admin/channels` | `bot:config` | جایگزینی کانال‌ها |
 

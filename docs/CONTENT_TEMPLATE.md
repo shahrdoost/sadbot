@@ -45,7 +45,7 @@ Collector (گوروتین سراسری داخل backend)
 | `content_folder` | `"Crypto"` | عنوان فولدر تلگرام منبع (**fail-closed**: نبود = هیچ‌چیز جمع نمی‌شود) |
 | `content_channel` | `""` | کانال مقصد (`@username` یا `-100…`) |
 | `content_publish_via` | `"bot"` | `bot` = فرستادن با Bot API (بات باید ادمین مقصد باشد)؛ `sidecar` = فرستادن از حساب MTProto انتخاب‌شده با Telethon (بدون نیاز به ادمین‌کردن بات — همان مسیر قدیمی sadcontent). از پنل: «نحوهٔ انتشار» |
-| `content_text_only` | `false` | `true` = خروجی **فقط متن** (بدون کارت/عکس/رندر/خلاصه؛ هیچ خطایی به متن خام برنمی‌گردد). سقف کپشن ۴۰۹۶ و `brand_handle` **بعد از برش** به انتهای پیام اضافه می‌شود تا در پست‌های بلند تبلیغ گم نشود. از پنل: «فقط متن (بدون کارت/عکس)» — با فعال‌شدن، بلاک برند و پرامپت CARD پنهان می‌شوند |
+| `content_text_only` | `false` | `true` = خروجی **فقط متن** (بدون کارت/عکس/رندر/خلاصه؛ هیچ خطایی به متن خام برنمی‌گردد). سقف پیام ۴۰۹۶. از پنل: «فقط متن (بدون کارت/عکس)» — با فعال‌شدن، بلاک برند و پرامپت CARD پنهان می‌شوند |
 | `content_poll_minutes` | `2` | فاصلهٔ poll |
 | `content_backfill_limit` | `20` | در اولین اجرا حداکثر چند پست آخر هر کانال |
 | `content_min_length` | `40` | حداقل طول متن |
@@ -93,6 +93,7 @@ Collector (گوروتین سراسری داخل backend)
 - **خلاصهٔ کارت**: گارد <۴۰ کاراکتر؛ خطا/جواب مکالمه‌ای → متن کامل داخل کارت؛ کپشن = همیشه متن کامل[:1000]
 - **عکس منبع**: فقط photo (sidecar GetPhoto → JPEG)؛ به‌صورت data-URI داخل کارت
 - **بدون لینک**: هیچ لینک وبی در پست منتشر نمی‌شود (قاعدهٔ صریح: «هیچ لینکی نباید باشه») — `stripForeignMentions` حالا علاوه بر `t.me` و منشن‌های غریبه، همهٔ `http(s)://`، دامنه‌های بدون پیشوند (`instagram.com/x`) و هدف لینک‌های markdown (فقط label می‌ماند) را حذف می‌کند. **مستثناها**: URIهای کانفیگ VPN (`vless://` و…) و لینک‌های اتصال پروکسی (بعد از strip با `attachProxyLinks` دوباره می‌چسبند) — فقط برند/هشتگ‌ها و تبلیغ کانال خودِ بات می‌ماند
+- **خط تبلیغ برند روی هر پست**: `appendBrandLine` خط «`{brand_handle} ✅ آپدیت‌های روز را دنبال کنید» را به `CleanedText` اضافه می‌کند — **قبل از برش ۱۰۰۰ کاراکتری کپشن** تا در پست‌های بلند حذف نشود، و در **همهٔ مسیرهای انتشار** (کارت، fallback رندر، فقط-متن). idempotent (پستی که از قبل handle دارد دوباره نمی‌گیرد). قبلاً فقط مسیر text_only آن را می‌زد — کارت‌ها بدون تبلیغ می‌رفتند (تست `TestBrandLineOnEveryPost` این باگ را گرفت). نکته: `cleaned_text` در `content_posts` بدون این خط ذخیره می‌شود؛ خط فقط روی کپشنِ ارسالی است
 - **گیت آگهی (deterministic)**: `looksLikePromo` با نشانه‌های `promoMarkers` (شرط‌بندی/قمار، ad-slot انگلیسی، «جایگاه تبلیغ» و…) **بالای همهٔ مسیرهای انتشار** (کارت و متن) — حتی اگر مدل AI نگه‌شان داشته باشد، هرگز منتشر نمی‌شوند
 - **رندر**: فقط post (1080×1080 — فرمت پست اینستاگرام) با فونت Vazirmatn و هایلایت اعداد accent برند؛ نسخهٔ story (1080×1920) دیگر ساخته نمی‌شود — هر پست دقیقاً یک تصویر و یک پیام در کانال (قبلاً post+story با کپشن تکراری دو بار می‌رفت)؛ **خطای رندر = ارسال متن خام** (رکورد `render_failed`)
 - **پیام رسانه‌ای بدون متن**: رد می‌شود (عین sadcontent — فقط-عکس بدون متن با min_length حذف می‌شود)
@@ -131,4 +132,4 @@ cd backend
 go test ./internal/content/    # unit با fake های sidecar/llm/renderer/publisher
 ```
 
-پوشش: مسیر خوش‌مسیر (۱ PNG + رکورد published)، حذف کانال مقصد، NO_CONTENT، fallback خطای LLM، جواب مکالمه‌ای، fallback خطا/عدم‌دسترسی رندر، dedup، backfill limit، fail-closed فولدر، فیلترها (min_length/forwarded/keywords)، guard های AI، brand/link parsing، گیت آگهی (متن‌های گزارش‌شده و موارد منفی)، حذف لینک‌های وب (`TestStripForeignMentionsDropsWebLinks`)، بقا لینک پروکسی/کانفیگ، poll interval.
+پوشش: مسیر خوش‌مسیر (۱ PNG + رکورد published)، حذف کانال مقصد، NO_CONTENT، fallback خطای LLM، جواب مکالمه‌ای، fallback خطا/عدم‌دسترسی رندر، dedup، backfill limit، fail-closed فولدر، فیلترها (min_length/forwarded/keywords)، guard های AI، brand/link parsing، گیت آگهی (متن‌های گزارش‌شده و موارد منفی)، حذف لینک‌های وب (`TestStripForeignMentionsDropsWebLinks`)، بقا لینک پروکسی/کانفیگ، خط برند روی کارت و fallback (`TestBrandLineOnEveryPost`)، poll interval.
