@@ -16,7 +16,7 @@ type Sweeper struct {
 func NewSweeper(svc *Service) *Sweeper { return &Sweeper{svc: svc} }
 
 const (
-	autoVerifyMaxAge = 10 * time.Minute
+	autoVerifyMaxAge = 15 * time.Minute
 	verifyTick       = time.Minute
 	expireTick       = 6 * time.Hour
 )

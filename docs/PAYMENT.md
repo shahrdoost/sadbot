@@ -73,7 +73,7 @@ func (g *GameCreditor) AddCoins(ctx, botID, userID, n) (int, error) {
 
 | وظیفه | فاصله | توضیح |
 |---|---|---|
-| Auto-verify | ۱ دقیقه | پرداخت‌های <۱۰ دقیقه → verify |
+| Auto-verify | ۱ دقیقه | پرداخت‌های <۱۵ دقیقه → verify |
 | انقضای pending | ۱ دقیقه | pending‌های کهنه → failed (یک‌بار اطلاع) |
 | انقضای اشتراک | ۶ ساعت | اشتراک‌های منقضی → expired |
 
