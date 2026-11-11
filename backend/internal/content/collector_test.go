@@ -396,6 +396,30 @@ func TestAiCleanGuards(t *testing.T) {
 	if out != longPersianNews() || l.calls != 0 {
 		t.Error("ai_enabled=false must skip the model")
 	}
+
+	// NO_CONTENT followed by an explanation is still a refusal
+	l.calls = 0
+	l.replies = []string{"NO_CONTENT\n\n(این متن یک یادداشت فنی/توسعه است — برای انتشار مناسب نیست.)"}
+	out, drop = c.aiClean(context.Background(), uuid.New(), longPersianNews(), map[string]any{})
+	if !drop || out != "" {
+		t.Errorf("NO_CONTENT+explanation: out=%q drop=%v", out, drop)
+	}
+
+	// markdown-wrapped refusal (**NO_CONTENT**) is still a refusal
+	l.calls = 0
+	l.replies = []string{"**NO_CONTENT**\n\nاین پیام یک مکالمهٔ فنی خصوصی هست که برای انتشار مناسب نیست."}
+	out, drop = c.aiClean(context.Background(), uuid.New(), longPersianNews(), map[string]any{})
+	if !drop || out != "" {
+		t.Errorf("bold NO_CONTENT: out=%q drop=%v", out, drop)
+	}
+
+	// meta commentary about the task is not cleaned content
+	l.calls = 0
+	l.replies = []string{"متوجه شدم — این یک باگ در پردازش خروجی بوده. برای رفع مشکل، لایه پردازش را اصلاح کنید."}
+	out, drop = c.aiClean(context.Background(), uuid.New(), longPersianNews(), map[string]any{})
+	if !drop {
+		t.Errorf("meta commentary must be dropped, got %q", out)
+	}
 }
 
 func TestBrandOf(t *testing.T) {
@@ -573,6 +597,10 @@ func TestLooksLikePromo(t *testing.T) {
 		"🔑 بروزرسانی مهم برای کاربران VIP – Vr-V2ray",
 		"پلن یک‌ماهه ۱۵۰/۰۰۰ تومان\nبرای خرید پیام بدید",
 		"کانفیگ‌های رایگان فقط تا تکمیل ظرفیت توزیع میشن",
+		// reported 2026-11-11: these three shipped to the channel
+		"Server: — YOUR PROXY HERE —\nPort: 443\nSecret: reserve your spot ↓\n\n👆 This is where your proxy could sit — a dedicated post at the time you pick.\n🎁 First slot 50% off.",
+		"🚀 وقتی شرط ‌هاتون رو توی ریتزوبت ثبت کنین ، علاوه از ضرایب بالا ، هفتگی با کد های هدیه کسب درآمد میکنید 🤑\n#شرطبندی\n♦️ آموزش شارژ حساب با کریپتو\n♦️ آموزش شارژ حساب  ریالی در ریتزوبت",
+		"♦️ آموزش شارژ حساب با کریپتو\n♦️ آموزش شارژ حساب  ریالی در ریتزوبت",
 	}
 	for _, s := range promo {
 		if !looksLikePromo(s) {
@@ -583,6 +611,9 @@ func TestLooksLikePromo(t *testing.T) {
 		"🖥 سرور جدید V2rayNG\n```\nvless://uuid@host:443?security=tls\n```",
 		"⚠️ قطع فوری اینترنت در صورت آغاز جنگ جدید",
 		"بیت‌کوین امروز با رشد ۴ درصدی به ۶۸۵۰۰ دلار رسید",
+		"🖥 سرور جدید\nServer: 1.2.3.4\nPort: 443\nSecret: aBcDeFgHiJkL",
+		"شرط لازم برای اجرای این توافق هنوز اعلام نشده است",
+		"اپلیکیشن تلگرام نسخهٔ جدیدش رو منتشر کرد",
 	}
 	for _, s := range keep {
 		if looksLikePromo(s) {
@@ -643,6 +674,62 @@ func TestCollectorTextOnlyDropsPromo(t *testing.T) {
 	}
 }
 
+// TestCollectorDropsReportedAds: the exact texts the user reported on
+// @mr_vpn_here (2026-11-11) — a sold ad slot and two betting promos — must
+// never publish, on the text path or the card path.
+func TestCollectorDropsReportedAds(t *testing.T) {
+	ads := []string{
+		"Server: — YOUR PROXY HERE —\nPort: 443\nSecret: reserve your spot ↓\n\n👆 This is where your proxy could sit — a dedicated post at the time you pick.\n🎁 First slot 50% off.",
+		"🚀 وقتی شرط ‌هاتون رو توی ریتزوبت ثبت کنین ، علاوه از ضرایب بالا ، هفتگی با کد های هدیه کسب درآمد میکنید 🤑\n#شرطبندی\n♦️ آموزش شارژ حساب با کریپتو\n♦️ آموزش شارژ حساب  ریالی در ریتزوبت",
+		"♦️ آموزش شارژ حساب با کریپتو\n♦️ آموزش شارژ حساب  ریالی در ریتزوبت",
+	}
+
+	// text-only path (the @mr_vpn_here shape)
+	c, store, side, l, _, _, _ := newTestCollector(t)
+	l.replies = []string{ads[0], ads[1], ads[2]}
+	c.SetPublisherViaMeta(func(_ context.Context, _ uuid.UUID, _, channel, caption string, photos [][]byte, _ string) error {
+		side.sentMeta = append(side.sentMeta, publishCall{channel: channel, caption: caption, numPngs: len(photos)})
+		return nil
+	})
+	c.SetPricesFunc(func(uuid.UUID) map[string]any {
+		return map[string]any{
+			"content_account_id":  "acc1",
+			"content_channel":     "@mr_vpn_here",
+			"content_folder":      "Crypto",
+			"content_publish_via": "sidecar",
+			"content_text_only":   true,
+			"content_min_length":  10,
+			"brand_handle":        "@mr_vpn_here",
+		}
+	})
+	msgs := make([]tgsidecar.Message, 0, len(ads))
+	for i, ad := range ads {
+		msgs = append(msgs, tgsidecar.Message{ID: 30 + i, Text: ad})
+	}
+	side.messages["-100111"] = msgs
+	c.Tick(context.Background())
+	if len(side.sentMeta) != 0 {
+		t.Fatalf("text path published ads: %+v", side.sentMeta)
+	}
+	for _, p := range store.posts {
+		if p.Status != domain.ContentStatusNoContent {
+			t.Fatalf("ad must land as no_content in the ledger, got %s (%+v)", p.Status, p)
+		}
+	}
+	if len(store.posts) != len(ads) {
+		t.Fatalf("want %d ledger rows, got %d", len(ads), len(store.posts))
+	}
+
+	// card path must gate identically
+	c2, _, side2, l2, _, p2, _ := newTestCollector(t)
+	l2.replies = []string{ads[1]}
+	side2.messages["-100111"] = []tgsidecar.Message{{ID: 40, Text: ads[1]}}
+	c2.Tick(context.Background())
+	if len(p2.calls) != 0 {
+		t.Fatalf("card path published an ad: %+v", p2.calls)
+	}
+}
+
 func TestStripForeignMentions(t *testing.T) {
 	in := "🌐 کانفیگ ملی‌شکن\n@SERVERNETT\n\nServer: x.test\nSecret: abc\n@ProxyMTProto\n\n@mr_vpn_here ✅\n\nلینک: https://t.me/VlessConfig/12"
 	out := stripForeignMentions(in, "@mr_vpn_here")
@@ -691,6 +778,19 @@ func TestAttachProxyLinks(t *testing.T) {
 
 	t.Run("single link keeps the direct label", func(t *testing.T) {
 		out := attachProxyLinks("Server: Unknown\nPort: 443\nSecret: EERighJJvXrFGRMCIMjdCQ", []string{u1})
+		if !strings.Contains(out, "[🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن]("+u1+")") {
+			t.Errorf("direct label missing: %q", out)
+		}
+	})
+
+	t.Run("bold block replaced", func(t *testing.T) {
+		in := "📡 پروکسی MTProto\n\n**Server:** Unknown\n**Port:** 853\n**Secret:** ee54ce330e4690cc297d2b031ff3f288b0\n\nفالو کنید."
+		out := attachProxyLinks(in, []string{u1})
+		for _, bad := range []string{"Unknown", "Port", "Secret"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("still contains %q in %q", bad, out)
+			}
+		}
 		if !strings.Contains(out, "[🔒 اتصال مستقیم به پروکسی — روی همین دکمه بزن]("+u1+")") {
 			t.Errorf("direct label missing: %q", out)
 		}
@@ -800,5 +900,26 @@ func TestCollectorButtonOnlySurvivesNoContentDrop(t *testing.T) {
 	}
 	if len(store.posts) != 1 || store.posts[0].Status != domain.ContentStatusPublished {
 		t.Errorf("posts = %+v", store.posts)
+	}
+}
+
+// TestStripForeignMentionsDropsWebLinks: posts carry no links at all (user:
+// «هیچ لینکی نباید باشه») — web URLs and bare domains go, markdown labels and
+// the brand handle stay, VPN config URIs survive.
+func TestStripForeignMentionsDropsWebLinks(t *testing.T) {
+	in := "طلا ریزش خواهد کرد به چند دلیل مهم فاندامنتال\n\nhttps://www.instagram.com/reel/DfmoXS9ISeF/?psln=abc\n\nجزئیات [ویدیو](https://youtube.com/watch?v=x1)\ninstagram.com/reel/other\n@mrtradeaibot #طلا"
+	out := stripForeignMentions(in, "@mrtradeaibot")
+	if strings.Contains(out, "instagram.com") || strings.Contains(out, "youtube.com") {
+		t.Fatalf("web links must be stripped: %q", out)
+	}
+	if !strings.Contains(out, "طلا ریزش خواهد کرد") || !strings.Contains(out, "جزئیات ویدیو") {
+		t.Fatalf("text and markdown labels must survive: %q", out)
+	}
+	if !strings.Contains(out, "@mrtradeaibot") || !strings.Contains(out, "#طلا") {
+		t.Fatalf("brand handle and hashtags must survive: %q", out)
+	}
+	uri := stripForeignMentions("کانفیگ:\nvless://uuid@host:443?type=tcp", "@brand")
+	if !strings.Contains(uri, "vless://uuid@host:443?type=tcp") {
+		t.Fatalf("config URI must survive: %q", uri)
 	}
 }

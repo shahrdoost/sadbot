@@ -313,6 +313,16 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 	cleaned = attachProxyLinks(cleaned, m.ProxyURLs)
 	post.CleanedText = strPtr(cleaned)
 
+	// deterministic ad gate (every publish path): contests, VIP notices,
+	// price lists, betting promos and sold ad slots never ship — even when
+	// the model keeps them (or rewords them just enough to slip past)
+	if looksLikePromo(cleaned) || looksLikePromo(raw) {
+		log.Printf("[content] bot %s: promo/ad dropped (msg %d)", botID, m.ID)
+		post.Status = domain.ContentStatusNoContent
+		_ = c.store.InsertPost(ctx, post)
+		return
+	}
+
 	caption := cleaned
 	if len(caption) > 1000 {
 		caption = caption[:1000]
@@ -331,14 +341,6 @@ func (c *Collector) processMessage(ctx context.Context, botID uuid.UUID, account
 
 	// text-only bots (no cards): plain messages, published status
 	if boolOf(prices["content_text_only"], false) {
-		// deterministic ad gate: contests / VIP notices / price lists never ship,
-		// even when the model keeps them (or rewords them just enough to slip past)
-		if looksLikePromo(cleaned) || looksLikePromo(raw) {
-			log.Printf("[content] bot %s: promo/ad dropped (msg %d)", botID, m.ID)
-			post.Status = domain.ContentStatusNoContent
-			_ = c.store.InsertPost(ctx, post)
-			return
-		}
 		text := cleaned
 		if len(text) > 4000 {
 			text = text[:4000]
@@ -447,7 +449,10 @@ func (c *Collector) aiClean(ctx context.Context, botID uuid.UUID, text string, p
 		return text, false // fallback: raw text
 	}
 	out = strings.TrimSpace(out)
-	if out == "" || strings.ToUpper(out) == "NO_CONTENT" {
+	// models sometimes refuse as "**NO_CONTENT**" or explain after the token —
+	// strip markdown/whitespace and treat the head of the reply as the verdict
+	normalized := strings.TrimLeft(out, " \t\n*_`~#>")
+	if out == "" || strings.HasPrefix(strings.ToUpper(normalized), "NO_CONTENT") {
 		return "", true
 	}
 	if containsAny(out, conversationalMarkers) {

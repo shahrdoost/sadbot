@@ -24,7 +24,11 @@ Clean the following post:
   platform promos, limited-time offers, customer-service boilerplate
   (لطفاً صبور باشید، پشتیبانی، پاسخ تیم ما), "بعد از ارسال" notices,
   private-channel memberships (عضو کانال خصوصی، تمایل دارند عضو شوند,
-  کی بخریم/کی بفروشیم signal groups), "به آیدی زیر مراجعه کنید" invites
+  کی بخریم/کی بفروشیم signal groups), "به آیدی زیر مراجعه کنید" invites,
+  betting/gambling promos (شرط‌بندی، کازینو، ضرایب بالا، کد هدیه، شارژ حساب،
+  سایت‌های شرط‌بندی), sold ad slots or placements ("YOUR PROXY HERE",
+  "reserve your spot", "50% off", جایگاه تبلیغ، تبلیغ شما),
+  app-download promos (دانلود اپلیکیشن، اپلیکیشن اندروید)
 - Keep the actual news, analysis, numbers and facts — preserve meaning
 - Write natural, tidy Persian
 - Output ONLY the cleaned text. If nothing meaningful remains, output exactly: NO_CONTENT`
@@ -38,8 +42,14 @@ Clean the following post:
 )
 
 // conversationalMarkers — outputs containing these are the model answering
-// conversationally instead of cleaning (ported guard from sadcontent).
-var conversationalMarkers = []string{"لطفاً", "لطفا", "ارسال کنید", "متنی که", "بفرمایید"}
+// conversationally instead of cleaning (ported guard from sadcontent), or
+// writing meta commentary about the task ("this text is not publishable",
+// "here is how I would fix the bug") instead of the cleaned post.
+var conversationalMarkers = []string{
+	"لطفاً", "لطفا", "ارسال کنید", "متنی که", "بفرمایید",
+	"متوجه شدم", "برای انتشار مناسب نیست", "مناسب برای انتشار",
+	"راهنمایی کنم", "کمک می‌کنم", "بفرستید", "یادداشت فنی",
+}
 
 // cardConversationalMarkers — the card-summary guard set (same minus بفرمایید).
 var cardConversationalMarkers = []string{"لطفاً", "لطفا", "ارسال کنید", "متنی که"}
@@ -60,6 +70,12 @@ var promoMarkers = []string{
 	"تکمیل ظرفیت", "ظرفیت توزیع", "فقط تا ساعت",
 	"برای کاربران VIP", "کاربران VIP", "بروزرسانی مهم برای",
 	"بری بت", "بونوس", "تبلیغات پذیرفته", "فروش فیلترشکن",
+	// betting / gambling promos (reported 2026-11-11: ریتزوبت ads shipped)
+	"شرطبندی", "شرط بندی", "کازینو", "ضرایب بالا", "ضریب بالا",
+	"کسب درآمد", "کد هدیه", "کد های هدیه", "شارژ حساب", "ریتزوبت",
+	// sold ad slots / placements and app-download promos («YOUR PROXY HERE»)
+	"your proxy here", "reserve your spot", "first slot", "50% off", "ad slot",
+	"جایگاه تبلیغ", "تبلیغ شما", "اپلیکیشن اندروید", "دانلود اپلیکیشن",
 }
 
 func containsAny(s string, subs []string) bool {
@@ -90,11 +106,13 @@ func stripSourceCredits(s string) string {
 }
 
 // looksLikePromo is the deterministic guard behind the LLM: contests, VIP
-// notices and price lists must not reach the channel.
+// notices and price lists must not reach the channel. Matching is
+// case-insensitive so English ad copy ("YOUR PROXY HERE", "50% off") is caught
+// in any casing.
 func looksLikePromo(s string) bool {
-	folded := foldZWNJ(s)
+	folded := strings.ToLower(foldZWNJ(s))
 	for _, m := range promoMarkers {
-		if strings.Contains(folded, foldZWNJ(m)) {
+		if strings.Contains(folded, strings.ToLower(foldZWNJ(m))) {
 			return true
 		}
 	}
@@ -118,20 +136,32 @@ var (
 	mentionRe   = regexp.MustCompile(`@[A-Za-z][A-Za-z0-9_]{3,}`)
 	tmeLinkRe   = regexp.MustCompile(`(?:https?://)?t\.me/\S+`)
 	blankRunRe  = regexp.MustCompile(`\n{3,}`)
+	// no web links may ship (user: «هیچ لینکی نباید باشه») — only the brand
+	// promo line is added later. Markdown links keep their label text.
+	mdLinkRe = regexp.MustCompile(`\[([^\]]+)\]\([^)]*\)`)
+	webLinkRe = regexp.MustCompile(`(?i)(?:https?://|www\.)[^\s)\]]+`)
+	// bare host/path shapes without a scheme ("instagram.com/reel/x")
+	bareDomainRe = regexp.MustCompile(`(?i)\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|org|net|ir|io|co|me|tv|info|link|fun|app|dev|ai|xyz|shop|online|site|store|ly|gl|be|cc)(?:/[^\s)\]]*)?`)
 )
 
-// stripForeignMentions removes source-channel @handles and t.me links, keeping
-// only the brand handle. Config URIs are placeholdered so `vless://id@host`
-// is not damaged.
+// stripForeignMentions removes source-channel @handles and every web link
+// (t.me, instagram, bare domains — posts carry no links at all), keeping only
+// the brand handle. Config URIs are placeholdered so `vless://id@host`
+// is not damaged; proxy connect links are re-attached later by
+// attachProxyLinks and are therefore not lost here.
 func stripForeignMentions(s, brandHandle string) string {
 	if s == "" {
 		return s
 	}
+	// unwrap markdown links first so a protected URI inside one survives
+	s = mdLinkRe.ReplaceAllString(s, "$1")
 	var kept []string
 	protected := configURIRe.ReplaceAllStringFunc(s, func(m string) string {
 		kept = append(kept, m)
 		return "\x00u" + strconv.Itoa(len(kept)-1) + "\x00"
 	})
+	protected = webLinkRe.ReplaceAllString(protected, "")
+	protected = bareDomainRe.ReplaceAllString(protected, "")
 	protected = tmeLinkRe.ReplaceAllString(protected, "")
 	protected = mentionRe.ReplaceAllStringFunc(protected, func(m string) string {
 		if brandHandle != "" && strings.EqualFold(m, brandHandle) {
@@ -187,8 +217,11 @@ func attachProxyLinks(text string, urls []string) string {
 	block := strings.Join(links, "\n")
 
 	lines := strings.Split(text, "\n")
+	// the model sometimes bolds the fields (**Server:**) — match on a copy
+	// stripped of emphasis markers, replace the original lines
+	emph := strings.NewReplacer("*", "", "`", "")
 	for i := range lines {
-		if !proxyHostLineRe.MatchString(lines[i]) {
+		if !proxyHostLineRe.MatchString(emph.Replace(lines[i])) {
 			continue
 		}
 		// fields may be separated by blank lines or an emoji bullet
@@ -198,6 +231,7 @@ func attachProxyLinks(text string, urls []string) string {
 			if k := strings.LastIndex(ln, "•"); k >= 0 {
 				ln = ln[k+len("•"):]
 			}
+			ln = emph.Replace(ln)
 			if proxyPortLineRe.MatchString(ln) || proxySecretLineRe.MatchString(ln) {
 				fielded = true
 			} else if strings.TrimSpace(lines[j]) != "" {
