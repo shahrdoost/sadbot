@@ -13,11 +13,11 @@
 | فروش | فروش همه بمب‌ها → پول |
 | ارتقا | افزایش auto_lvl با پول |
 | دعوت | لینک دعوت → پاداش |
-| خرید پول | از طریق درگاه (`buy_money`) |
+| خرید پول | از طریق درگاه (`act:buy` → `act:buy:<pkgID>`) |
 
 **قیمت‌ها (`prices`)**:
-- `money_package_1`, `money_package_2`, ... (تومان)
-- `upgrade_base_cost`, `upgrade_multiplier`
+- `packages`: آرایهٔ `[{id, label, amount, price}]` (تومان) — `price` فیلد قیمت است
+- `sell_price_per_bomb`, `upgrade_base_cost`, `auto_rate_per_level`, `manual_produce_amount`, `referral_bonus_bombs`
 
 **Repo**: `BombLandRepo` — `EnsurePlayer`, `SellAll`, `TryUpgrade`, `CatchUpAuto`, `SetInvitedBy`
 
@@ -36,8 +36,8 @@
 | برداشت | تبدیل امتیاز → نقد (cash/physical) |
 
 **قیمت‌ها**:
-- `energy_price_toman`, `energy_amount`
-- `opal_price_toman`, `score_to_toman_rate`
+- `packages`: آرایهٔ `[{id, label, energy, price}]` (تومان) — `price` فیلد قیمت است
+- `opal_value_toman`, `gold_1mg_toman`, `gold_1mg_opal`, `withdraw_min_mg_cash`, `withdraw_min_g_physical`, `pool_share_pct`
 
 **Repo**: `DuelRepo` — `RechargeEnergy`, `SpendEnergy`, `AddItems`, `ConsumeItems`, `AddOpals`, `FindRival`, `TopPlayers`, `EnsureBots`, `withdrawals`
 
@@ -54,7 +54,7 @@
 | امتیاز | بر اساس مبلغ و استریک |
 | دعوت | کد دعوت → پاداش |
 
-**Repo**: `FavaaniRepo` — `EnsureUser`, `GetUser`, `AddChallenge`, `GetChallenges`, `SetInvitedBy`
+**Repo**: `FavaaniRepo` — `EnsureUser`, `GetUser`, `SubmitChallenge`, `CountUsers`
 
 ---
 
@@ -69,7 +69,7 @@
 | کلیک | هر کلیک معتبر = +N تومان |
 | برداشت | برداشت موجودی |
 
-**قیمت‌ها**: `coins_per_click`, `min_withdrawal`, `withdrawal_fee`
+**قیمت‌ها**: `earn_per_click`, `min_withdraw`, `base_url`
 
 **Repo**: `ShlinksRepo` — `CreateLink`, `RecordClick`, `GetUser`, `RequestWithdrawal`
 
@@ -89,7 +89,7 @@
 
 **قیمت‌ها**: `coins_per_click`, `invite_bonus_coins`, `base_url`
 
-**Repo**: `WhoseemeRepo` — `EnsureUser`, `CreateLink`, `RecordClick`, `GetLinks`, `RequestWithdrawal`
+**Repo**: `WhoseemeRepo` — `EnsureUser`, `GetUser`, `CreateLink`, `GetLinkByToken`, `RecordClick`, `GetClicks`, `ListLinks`
 
 ---
 
@@ -107,7 +107,7 @@
 
 **قیمت‌ها**: `fortunes: string[]`, `fortune_cooldown_hours`
 
-**Repo**: `FaalRepo` — `EnsureUser`, `GetUser`, `AddFortune`, `GetFortunes`
+**Repo**: `FaalRepo` — `EnsureUser`, `GetLastFortuneTime`, `SaveFortune`, `CountUsers`
 
 ---
 
@@ -121,11 +121,11 @@
 | جستجو | یافتن کاربر آنلاین |
 | چت | رله پیام بین دو طرف |
 | پایان | پایان چت + امتیازدهی |
-| گزارش | گزارش کاربر نامناسب |
+| گزارش | بازخورد متنی (بدون ثبت دیتابیس) |
 
 **قیمت‌ها**: `search_timeout_seconds`
 
-**Repo**: `AnonyChatRepo` — `FindPartner`, `MatchUsers`, `EndChat`, `ReportUser`
+**Repo**: `AnonyChatRepo` — `EnsureUser`, `GetStatus`, `SetStatus`, `FindPartner`, `MatchUsers`, `EndChat`
 
 ---
 

@@ -7,13 +7,13 @@
 ```
 کاربر → «💰 خرید» → payment.BuyPackage(botID, userID, packageID)
                               ↓
-                    Gateway.StartPayment (catroom.ir)
+                    Gateway.CreatePayment (catroom.ir)
                               ↓
                     کاربر → درگاه → پرداخت
                               ↓
         POST /payments/gateway-hook (سرور-به-سرور) / Sweeper
                               ↓
-                    payment.Complete → CAS status=pending→verified
+                    payment.Complete → CAS status=pending/failed→verified
                               ↓
                     GameCreditor.AddCoins(botID, userID, coins)
                               ↓
@@ -31,19 +31,21 @@
 - **آدرس**: `catroom.ir` (سازگار Zibal)
 - **مبلغ**: تومان × ۱۰ = ریال (BIGINT)
 - **متودها**:
-  - `StartPayment(amountRials, callbackURL, description)` → `{payURL, trackID}`
-  - `VerifyPayment(trackID, amountRials)` → `{verified, refID}`
-- **Dev Mode**: بدون `GATEWAY_MERCHANT` → پرداخت شبیه‌سازی‌شده (فقط برای تست)
+  - `CreatePayment(ctx, orderID, amountTomans, callbackURL, notifyURL)` → `{PaymentID, PayURL}`
+  - `Verify(ctx, orderID)` → `(verified bool, err)`
+  - `Status(ctx, orderID)` → وضعیت خام از درگاه (داخل `Hook` برای استعلام مجدد؛ هوک هرگز payload را باور نمی‌کند)
+- **Dev Mode**: `PAYMENT_DEV_MODE=true` + `PAYMENT_DEV_USERS` → پرداخت فوراً `dev://payment-success` برمی‌گرداند (فقط برای تست)
 
 ### ۲. `payment.Service` — منطق کسب‌وکار
 
 ```go
 type Service struct {
-    store     PaymentStore
-    coins     CoinCreditor
-    gateway   *Gateway
-    notifier  Notifier
-    callback  string
+    store       PaymentStore
+    coins       CoinCreditor
+    gateway     *Gateway
+    notifier    Notifier
+    callbackURL string
+    notifyURL   string // از callbackURL قابل‌اشتقاق: /callback → /gateway-hook
 }
 ```
 
@@ -51,21 +53,24 @@ type Service struct {
 - `BuyPackage(botID, userID, telegramID, packageID, coins, priceTomans)` → `payURL`
 - `BuySubscription(botID, userID, telegramID, priceTomans)` → `payURL`
 - `Complete(paymentID)` — تایید + credit (CAS)
-- `HandleCallback(trackID, status)` — callback عمومی
+- `Hook(paymentID, event)` — هوک سرور-به-سرور؛ وضعیت را دوباره از درگاه استعلام می‌کند (payload هرگز باور نمی‌شود)
+- `VerifyUserPayment(p)` / `VerifyLatestPending(botID, userID)` — استعلام دستی / sweeper
 
 ### ۳. `GameCreditor` — روتینگ اعتبار
 
 ```go
 type GameCreditor struct {
-    db      *pgxpool.Pool
-    dating  CoinCreditor  // fallback
+    db       *pgxpool.Pool
+    dating   CoinCreditor          // fallback
+    bombland *postgres.BombLandRepo
+    duel     *postgres.DuelRepo
 }
 
 func (g *GameCreditor) AddCoins(ctx, botID, userID, n) (int, error) {
     // روتینگ بر اساس bots.template_key:
-    // bombland → UPDATE bombland_players SET money=money+$n
-    // duel     → DuelRepo.AddEnergy
-    // default  → dating CoinCreditor
+    // bombland → BombLandRepo (money)
+    // duel     → DuelRepo (energy)
+    // default  → dating CoinCreditor (dating/welcome_menu/content/…)
 }
 ```
 
@@ -101,13 +106,13 @@ bc.ReplyInline("💰 برای خرید کلیک کن:", [][]engine.InlineButton{
 ## Callback و هوک
 
 ```
-GET  /api/v1/payments/callback?trackId=...&status=...   (hit سروری — خریدار اینجا نمی‌آید)
+GET  /api/v1/payments/callback?pid=...   (hit سروری — خریدار اینجا نمی‌آید؛ ?orderId= هم پذیرفته می‌شود)
 POST /api/v1/payments/gateway-hook  {orderId, status}   (سرور-به-سرور از درگاه)
 ```
 
 - **عمومی** (بدون JWT)
 - تایید سمت سرور (هرگز به client/هوک اعتماد نمی‌کند — وضعیت دوباره از درگاه استعلام می‌شود)
-- **CAS**: `UPDATE payments SET status='verified' WHERE id=$1 AND status='pending'`
+- **CAS**: `UPDATE payments SET status='verified' WHERE id=$1 AND status IN ('pending','failed')` — از `failed` هم تایید می‌شود (بازیابی پرداختی که دیر تسویه شده؛ credit فقط یک‌بار انجام می‌شود)
 - سپس `GameCreditor.AddCoins`
 - هوک گیرنده فقط wake-up است؛ `verified` دوباره `Complete` می‌شود و `failed` فقط وقتی خودِ درگاه هم failed باشد (ضد spoof)
 - اندپوینت callback قدیمی برای سازگاری مانده؛ تسویهٔ خریداران از طریق هوک + sweeper انجام می‌شود
@@ -117,8 +122,8 @@ POST /api/v1/payments/gateway-hook  {orderId, status}   (سرور-به-سرور 
 ```json
 {
   "packages": [
-    {"id": "package_1", "coins": 1000, "price_toman": 5000, "label": "۱۰۰۰ سکه"},
-    {"id": "package_2", "coins": 5000, "price_toman": 20000, "label": "۵۰۰۰ سکه"}
+    {"id": "package_1", "coins": 1000, "price": 5000, "label": "۱۰۰۰ سکه"},
+    {"id": "package_2", "coins": 5000, "price": 20000, "label": "۵۰۰۰ سکه"}
   ]
 }
 ```
@@ -136,26 +141,28 @@ POST /api/v1/payments/gateway-hook  {orderId, status}   (سرور-به-سرور 
 ## متغیرهای محیطی
 
 ```bash
-GATEWAY_MERCHANT=...        # کد پذیرنده catroom.ir
-GATEWAY_MODE=production|dev
-CALLBACK_URL=https://...    # آدرس callback عمومی
+PAYMENT_HOST_URL=https://catroom.ir   # میزبان درگاه (پیش‌فرض)
+PAYMENT_CALLBACK_URL=https://...      # callback عمومی؛ notifyURL خودکار از /callback ← /gateway-hook
+PAYMENT_DEV_MODE=true                 # فعال‌سازی حالت توسعه (verify آنی)
+PAYMENT_DEV_USERS=906919989           # شماره‌های تلگرام مجاز در dev mode (کاما-جدا)
 ```
 
 ## تست
 
 ```go
-// Dev mode بدون merchant — پرداخت شبیه‌سازی‌شده
-service := payment.NewService(store, creditor, nil, notifier, "http://localhost/callback")
+// Dev mode (PAYMENT_DEV_MODE=true و کاربر در PAYMENT_DEV_USERS)
+// — پرداخت فوراً تسویه می‌شود و URL خاصی به کاربر نشان داده نمی‌شود
+service := payment.NewService(store, creditor, gateway, notifier, "http://localhost/callback")
 payURL, _ := service.BuyPackage(ctx, botID, userID, tgID, "pkg1", 100, 1000)
-// payURL = "http://localhost/callback?trackId=test&status=OK"
+// payURL = "dev://payment-success" — قالب‌ها آن را تشخیص داده و رسید فوری نشان می‌دهند
 ```
 
 ## الگوهای اتمیک
 
 ```sql
--- تایید پرداخت (CAS)
+-- تایید پرداخت (CAS — از pending و failed)
 UPDATE payments SET status='verified', verified_at=now()
-  WHERE id=$1 AND status='pending';
+  WHERE id=$1 AND status IN ('pending','failed');
 
 -- credit سکه (بازی bombland)
 UPDATE bombland_players SET money=money+$3

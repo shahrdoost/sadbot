@@ -160,7 +160,7 @@ cat deploy/e2e/explore_bots.py | /tmp/sb-ssh root@212.87.199.140 \
 | توقف یک بات از پنل | دکمهٔ «توقف» در صفحهٔ بات (یا `POST /bots/{id}/stop`) |
 | بات در status=error | `last_error` را در صفحهٔ بات ببینید؛ معمولاً توکن نامعتبر — توکن جدید بدهید |
 | بات بعد از deploy «stopped» شد | (از ۲۰۲۶-۱۰-۱۸ دیگر عادی نیست — StopAll دیگر status را تغییر نمیدهد) اگر دیدید: `docker logs sadbot-backend \| grep runtime` + چک status در دیتابیس؛ در صورت نیاز `UPDATE bots SET status='running'` + ری‌استارت backend |
-| پیام منقضی-شد تکرار میرفت | (2026-10-17 رفع شد) سوییپر با مقدار `expired` که CHECK رد میکند → ردیف برای همیشه pending → اسپم هر دقیقه. حالا CAS با `failed` + اطلاع فقط یک بار؛ 남اگرده: `UPDATE payments SET status='failed' WHERE status='pending' AND created_at < now()-interval '10 minutes'` |
+| پیام منقضی-شد تکرار میرفت | (2026-10-17 رفع شد) سوییپر با مقدار `expired` که CHECK رد میکند → ردیف برای همیشه pending → اسپم هر دقیقه. حالا CAS با `failed` + اطلاع فقط یک بار؛ 남اگرده: `UPDATE payments SET status='failed' WHERE status='pending' AND created_at < now()-interval '15 minutes'` |
 | برای دیدن لاگ سوییپر | `docker logs sadbot-backend \| grep payment` |
 
 ### نکات ایمنی
