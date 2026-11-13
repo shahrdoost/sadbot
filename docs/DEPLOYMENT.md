@@ -106,11 +106,11 @@ cd /opt/sadbot && bash deploy/deploy.sh
 
 **بات‌ها بعد از deploy** (از ۲۰۲۶-۱۰-۱۸): دیگر استارت دستی لازم نیست — `StopAll` هنگام shutdown فقط context را کنسل میکند و `status` دیتابیس را دست نمیزند؛ پس بوت بعدی `StartRunningBots` همهٔ بات‌های `running` را خودش بالا میآورد. اگر بعد از deploy باتی مرده بود: `docker logs sadbot-backend | grep runtime` و `SELECT telegram_username, status FROM bots;` را چک کنید؛ در صورت نیاز `UPDATE bots SET status='running'` + ری‌استارت backend.
 
-**بات‌های فعال در production** (۲۰۲۶-۱۰-۲۵):
+**بات‌های فعال در production** (۲۰۲۶-۱۰-۲۵؛ وضعیت @ashnadbot ۲۰۲۶-۱۱-۱۳):
 
 | بات | یوزرنیم | قالب |
 |---|---|---|
-| آشنا | @ashnadbot | dating |
+| آشنا | @ashnadbot (+ دوقلوی کت @ashna_bot) | dating — `ai_enabled=0` |
 | آقای تریدر | @mrtradeaibot_bot | content |
 | بات محتوا وی‌پی‌ان | @batmhtvavipian_bot | content |
 | کارخانه بومبلند | @bombland_factory_bot_bot | bombland |

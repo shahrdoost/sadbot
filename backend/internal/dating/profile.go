@@ -30,7 +30,7 @@ func showProfilePage(bc *engine.BotContext, st *Store, botID uuid.UUID) {
 	ctx := engineBG()
 	p, err := st.Profile(ctx, botID, bc.UserID)
 	if err != nil {
-		bc.ReplyKBDStyled("پروفایل پیدا نشد. /start بزن.", homeKB)
+		bc.ReplyKBDStyled("پروفایل پیدا نشد. /start بزن.", homeKBFor(bc))
 		return
 	}
 	if p.DeactivatedAt != nil {

@@ -150,6 +150,9 @@ func stateKBD(rows ...[]string) [][]string { return rows }
 
 const humanRules = "\n\n🤝\n* لطفا احترام بگذارید و برای مخاطب مقابل شعور قائل باشید\n* از کلمات رکیک استفاده نکنید\n* در پایان مکالمه با ثبت امتیاز وضعیت کاربر را مشخص کنید"
 
+// assistantLabel is the home button that opens the AI companion scene.
+const assistantLabel = "🤖 چت با دستیار"
+
 // homeKB / searchKB mirror kpkchat's colored reply keyboards (Bot API 7.11+
 // button styles: primary = brand blue, success = green). Labels stay the
 // sadbot ones — they are wired to handleHome / isHomeButtonText / nav tests.
@@ -160,6 +163,50 @@ var homeKB = [][]engine.KBButton{
 	{{Text: "📖 راهنما"}, {Text: "💰 سکه"}, {Text: "👤 پروفایل من"}},
 	{{Text: "🎁 ماموریت‌ها"}, {Text: "💌 اعتراف ناشناس"}},
 	{{Text: "🤖 چت با دستیار"}, {Text: "📩 پشتیبانی"}},
+}
+
+// homeKBFor is the home keyboard with the panel's ai_enabled switch applied:
+// a disabled assistant disappears from the menu instead of sitting there
+// opening a disabled scene.
+func homeKBFor(bc *engine.BotContext) [][]engine.KBButton {
+	return homeKBForEnabled(aiEnabled(bc))
+}
+
+// homeKBForEnabled applies the assistant switch to a stored keyboard — used
+// outside BotContext (matcher notifications) where only prices are available.
+func homeKBForEnabled(aiOn bool) [][]engine.KBButton {
+	if aiOn {
+		return homeKB
+	}
+	rows := make([][]engine.KBButton, 0, len(homeKB))
+	for _, row := range homeKB {
+		var kept []engine.KBButton
+		for _, b := range row {
+			if b.Text != assistantLabel {
+				kept = append(kept, b)
+			}
+		}
+		if len(kept) > 0 {
+			rows = append(rows, kept)
+		}
+	}
+	return rows
+}
+
+// aiOn reads the same prices key aiEnabled checks, for callers without a
+// BotContext.
+func aiOn(prices map[string]any) bool {
+	v, ok := prices["ai_enabled"]
+	if !ok {
+		return true // unset = on, matching aiEnabled's default
+	}
+	switch n := v.(type) {
+	case float64:
+		return n != 0
+	case int:
+		return n != 0
+	}
+	return true
 }
 
 var searchKB = [][]engine.KBButton{
@@ -270,7 +317,7 @@ func pw(p *int) int {
 // swallowed as scene input.
 func isHomeButtonText(text string) bool {
 	switch text {
-	case "🔗 به یک ناشناس وصلم کن", "💘 مرور پروفایل‌ها", "🤖 چت با دستیار",
+	case "🔗 به یک ناشناس وصلم کن", "💘 مرور پروفایل‌ها", assistantLabel,
 		"💌 اعتراف ناشناس", "📩 پشتیبانی", "🔍 جستجوی پیشرفته",
 		"🔗 غریبه", "🚺 جستجوی دختر", "🚹 جستجوی پسر",
 		"📖 راهنما", "👤 پروفایل من", "🏠 منوی اصلی",
@@ -294,7 +341,7 @@ var commandLabels = map[string]string{
 	"profile":  "👤 پروفایل من",
 	"missions": "🎁 ماموریت‌ها",
 	"confess":  "💌 اعتراف ناشناس",
-	"ai":       "🤖 چت با دستیار",
+	"ai":       assistantLabel,
 	"support":  "📩 پشتیبانی",
 }
 
@@ -371,6 +418,12 @@ func (t *Template) HandleMessage(bc *engine.BotContext, text string) bool {
 			return true
 		}
 		return fallbackHome(bc, label)
+	}
+	// a disabled assistant has no menu button, so the platform ☰ entry must
+	// not open it either — answer and stay home (the scene would exit anyway)
+	if text == assistantLabel && !aiEnabled(bc) {
+		goHome(bc, "🤖 دستیار هوشمند فعلاً غیرفعال است.")
+		return true
 	}
 	// The persistent home keyboard stays visible in inline-only scenes, so any
 	// home-menu label must navigate instead of being swallowed as scene input.
@@ -721,7 +774,7 @@ func handleHome(bc *engine.BotContext, st *Store, text string) bool {
 		bc.ReplyKBDStyled(ttext(bc, "home.guide", "📖 راهنما\n\n"+
 			"با «🔗 به یک ناشناس وصلم کن» یه مخاطب پیدا کن و ناشناس چت کن.\n"+
 			"در پایان چت به طرف مقابلت امتیاز بده.\n"+
-			"برای خروج از هر بخش: 🏠 منوی اصلی"), homeKB)
+			"برای خروج از هر بخش: 🏠 منوی اصلی"), homeKBFor(bc))
 		return true
 
 	case "👤 پروفایل من":
@@ -776,7 +829,7 @@ func denyIfBlocked(bc *engine.BotContext, st *Store) bool {
 	}
 	bc.ReplyKBDStyled(ttext(bc, "blocked.account",
 		"🚫 دسترسی حساب شما توسط پشتیبانی موقتاً محدود شده است.\n"+
-			"برای پیگیری از بخش «📩 پشتیبانی» پیام بده."), homeKB)
+			"برای پیگیری از بخش «📩 پشتیبانی» پیام بده."), homeKBFor(bc))
 	return true
 }
 
@@ -806,7 +859,7 @@ func startSearch(bc *engine.BotContext, st *Store, genderFilter string) bool {
 	if cost > 0 {
 		ok, err := st.Repo().SpendCoins(ctx, botID, bc.UserID, cost)
 		if err != nil || !ok {
-			bc.ReplyKBDStyled(fmt.Sprintf("💰 سکه کافی نیست! (هزینهٔ جستجو: %d سکه)\nاز بخش «💰 سکه» سکه بخر.", cost), homeKB)
+			bc.ReplyKBDStyled(fmt.Sprintf("💰 سکه کافی نیست! (هزینهٔ جستجو: %d سکه)\nاز بخش «💰 سکه» سکه بخر.", cost), homeKBFor(bc))
 			return true
 		}
 	}
@@ -1087,7 +1140,7 @@ func goHome(bc *engine.BotContext, text string) {
 	bc.State["scene"] = "home"
 	bc.State["step"] = ""
 	bc.SaveState()
-	bc.ReplyKBDStyled(text, homeKB)
+	bc.ReplyKBDStyled(text, homeKBFor(bc))
 }
 
 func forceEndToRating(bc *engine.BotContext, st *Store, botID uuid.UUID, reason string) {

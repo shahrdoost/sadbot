@@ -438,6 +438,8 @@ func ghostHandleMessage(bc *engine.BotContext, st *Store, botID uuid.UUID, partn
 	if n >= threshold {
 		_ = st.EndChatNoRating(ctx, botID, bc.UserID, partnerUserID)
 		bc.ReplyKBD(ghostFarewell, chatRows)
+		bc.State["scene"] = "home"
+		bc.SaveState()
 		delay := time.Duration(priceInt(prices, "ghost_reply_delay_ms", 1500)) * time.Millisecond
 		go func() {
 			time.Sleep(delay)
@@ -481,6 +483,11 @@ func ghostHandleMessage(bc *engine.BotContext, st *Store, botID uuid.UUID, partn
 		for i, b := range bubbles {
 			if i > 0 {
 				time.Sleep(time.Duration(700+rand.Intn(1600)) * time.Millisecond)
+			}
+			// the ghost's think-time can outlive the chat (partner ended it,
+			// user pressed home) — a late bubble must not follow them there
+			if !bc.StillInScene("chat") {
+				return
 			}
 			kbd := mustKBD(chatRows)
 			if i < len(bubbles)-1 {

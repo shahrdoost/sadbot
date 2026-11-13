@@ -325,7 +325,7 @@ func startAdvancedSearch(bc *engine.BotContext, st *Store) bool {
 	if !hasSubscription(bc, botID) && cost > 0 {
 		ok, err := st.Repo().SpendCoins(ctx, botID, bc.UserID, cost)
 		if err != nil || !ok {
-			bc.ReplyKBDStyled(fmt.Sprintf("💰 سکه کافی نیست. هزینهٔ جستجو: %d سکه.", cost), homeKB)
+			bc.ReplyKBDStyled(fmt.Sprintf("💰 سکه کافی نیست. هزینهٔ جستجو: %d سکه.", cost), homeKBFor(bc))
 			bc.State["step"] = ""
 			bc.SaveState()
 			return true

@@ -398,6 +398,23 @@ func TestAiCleanGuards(t *testing.T) {
 		t.Error("ai_enabled=false must skip the model")
 	}
 
+	// the panel writes this flag as a NUMBER (settings service bool → 0/1), so
+	// 0 must switch the model off just like false — reading bool only meant the
+	// panel's off switch never reached content bots
+	for _, off := range []any{float64(0), 0} {
+		l.calls = 0
+		out, _ = c.aiClean(context.Background(), uuid.New(), longPersianNews(), map[string]any{"ai_enabled": off})
+		if out != longPersianNews() || l.calls != 0 {
+			t.Errorf("ai_enabled=%v must skip the model (numeric form)", off)
+		}
+	}
+	// and 1 must leave it on: the model's reply replaces the raw text
+	l.calls = 0
+	onOut, _ := c.aiClean(context.Background(), uuid.New(), longPersianNews(), map[string]any{"ai_enabled": float64(1)})
+	if onOut == longPersianNews() {
+		t.Error("ai_enabled=1 must let the model rewrite the text")
+	}
+
 	// NO_CONTENT followed by an explanation is still a refusal
 	l.calls = 0
 	l.replies = []string{"NO_CONTENT\n\n(این متن یک یادداشت فنی/توسعه است — برای انتشار مناسب نیست.)"}

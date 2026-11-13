@@ -106,6 +106,8 @@ Collector (گوروتین سراسری داخل backend)
 
 از env سراسری `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` (مشترک با دستیار dating). برای sadgpt: `LLM_BASE_URL=https://sadgpt.ir/v1` + `LLM_MODEL=xiaomi/mimo-v2.5`. بدون کلید: پاک‌سازی غیرفعال → متن خام.
 
+**کلید `ai_enabled` (رفع ۲۰۲۶-۱۱-۱۳):** سرویس تنظیمات پنل و endpoint ادمین این فلگ را به‌صورت **عدد** می‌نویسند (bool پنل → `0`/`1`)، ولی collector آن را فقط `bool` می‌خواند — یعنی خاموش‌کردن AI از پنل هرگز به بات‌های content نمی‌رسید. حالا `boolOf` هر دو شکل (`false`/`true` و `0`/`1`) را می‌پذیرد. تست: `TestAiCleanGuards` (حالت عددی).
+
 ## سرویس رندر (`renderer/`)
 
 - کانتینر پنجم استک: FastAPI + Playwright Chromium، پورت داخلی 8788

@@ -376,7 +376,7 @@ func (m *Matcher) sweepTimeouts(ctx context.Context, botID uuid.UUID) {
 		if err != nil {
 			continue
 		}
-		_ = m.notify(botID, p.Platform, p.TelegramID, "جستجو لغو شد.", mustKBStyled(homeKB))
+		_ = m.notify(botID, p.Platform, p.TelegramID, "جستجو لغو شد.", mustKBStyled(homeKBForEnabled(aiOn(m.prices(botID)))))
 	}
 }
 

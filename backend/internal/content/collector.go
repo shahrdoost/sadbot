@@ -431,7 +431,10 @@ func (c *Collector) aiClean(ctx context.Context, botID uuid.UUID, text string, p
 	if c.llm == nil || len(strings.TrimSpace(text)) < 30 {
 		return text, false // too short: never send to the model; publish as-is
 	}
-	if disabled, ok := prices["ai_enabled"].(bool); ok && !disabled {
+	// ai_enabled is written as a NUMBER by the settings service and the admin
+	// endpoint (panel bool → 0/1); only reading it as bool here meant turning
+	// the assistant off never reached content bots. boolOf accepts both.
+	if !boolOf(prices["ai_enabled"], true) {
 		return text, false
 	}
 	prompt := c.text(botID, "clean_prompt", CleanSystem)
@@ -607,8 +610,13 @@ func int64Of(s string) int64 {
 }
 
 func boolOf(v any, def bool) bool {
-	if b, ok := v.(bool); ok {
+	switch b := v.(type) {
+	case bool:
 		return b
+	case float64:
+		return b != 0
+	case int:
+		return b != 0
 	}
 	return def
 }

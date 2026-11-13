@@ -61,3 +61,54 @@ func TestAIGateFromPanel(t *testing.T) {
 		t.Fatalf("user stuck in ai scene after disable; scene = %q", got)
 	}
 }
+
+// TestAssistantHiddenFromHomeWhenDisabled: turning ai_enabled off must remove
+// «🤖 چت با دستیار» from the home keyboard itself (both platforms render the
+// same keyboard), not just refuse the scene — the request was to take the menu
+// entry away, and a dead button is what users keep pressing.
+func TestAssistantHiddenFromHomeWhenDisabled(t *testing.T) {
+	e := newBrowseEnv(t)
+	e.onboard(t, e.sendA, "امیر", "25", "آقام")
+	e.feed(t, e.sendA, "⏭ رد شد")
+
+	keyboard := func() string {
+		msg := e.sendA.lastTo(111)
+		if msg == nil {
+			return ""
+		}
+		return string(msg.ReplyMark)
+	}
+
+	// on (default): the button is on the menu
+	e.feed(t, e.sendA, "/start")
+	if kb := keyboard(); !strings.Contains(kb, assistantLabel) {
+		t.Fatalf("assistant button missing while enabled: %s", kb)
+	}
+
+	// off: gone from the menu
+	e.prices["ai_enabled"] = 0
+	e.feed(t, e.sendA, "/start")
+	if kb := keyboard(); strings.Contains(kb, assistantLabel) {
+		t.Fatalf("assistant button still on the menu while disabled: %s", kb)
+	}
+	if kb := keyboard(); !strings.Contains(kb, "پشتیبانی") {
+		t.Fatalf("the rest of the menu must survive: %s", kb)
+	}
+
+	// a stale press of the old button (or the ☰ /ai entry) lands home with the
+	// notice instead of opening the disabled scene
+	e.feed(t, e.sendA, assistantLabel)
+	if got := currentScene(t, e); got != "home" {
+		t.Fatalf("disabled assistant press opened scene %q", got)
+	}
+	if msg := e.sendA.lastTo(111); msg == nil || !strings.Contains(msg.Text, "غیرفعال") {
+		t.Fatalf("disabled assistant press must explain itself, got %#v", msg)
+	}
+
+	// re-enabling brings it back
+	e.prices["ai_enabled"] = 1
+	e.feed(t, e.sendA, "/start")
+	if kb := keyboard(); !strings.Contains(kb, assistantLabel) {
+		t.Fatalf("assistant button must return when re-enabled: %s", kb)
+	}
+}

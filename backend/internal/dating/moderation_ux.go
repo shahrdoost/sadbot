@@ -127,6 +127,15 @@ func handleSupportText(bc *engine.BotContext, st *Store, text string) bool {
 		goHome(bc, "پشتیبانی فعلاً در دسترس نیست.")
 		return true
 	}
+	// A button press is never a ticket body. On Kat every reply-keyboard press
+	// arrives as a callback whose data IS the label; an old screen's button
+	// (or a leftover chat button) pressed here used to be stored verbatim as a
+	// support ticket, so the admin's inbox filled with «📞 پشتیبانی»-style
+	// entries instead of what the user actually wrote.
+	if bc.IsCallback {
+		bc.ReplyKBD("لطفاً متن پیامت رو تایپ کن و بفرست (دکمه‌ها ثبت نمی‌شن).", supportRows)
+		return true
+	}
 	body := strings.TrimSpace(text)
 	if len([]rune(body)) < 3 || strings.HasPrefix(body, "/") {
 		bc.ReplyKBD("متن پیام باید حداقل ۳ حرف باشه. دوباره بنویس.", supportRows)

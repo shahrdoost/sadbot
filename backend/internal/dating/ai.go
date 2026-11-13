@@ -1,7 +1,6 @@
 package dating
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"math/rand"
@@ -111,7 +110,7 @@ func handleAIText(bc *engine.BotContext, st *Store, text string) bool {
 			if err != nil || !ok {
 				bc.ReplyKBDStyled(fmt.Sprintf(
 					"پیام‌های رایگانت تموم شد. هر پیام %d سکه‌ست یا با اشتراک پریموم نامحدوده.\nاز «💰 سکه» سکه بخر یا برگرد.",
-					cost), homeKB)
+					cost), homeKBFor(bc))
 				return true
 			}
 		}
@@ -167,11 +166,13 @@ func handleAIText(bc *engine.BotContext, st *Store, text string) bool {
 	data["ai_hist"] = out
 	bc.SaveState()
 
-	// human-layer typing delay (non-blocking)
+	// human-layer typing delay (non-blocking). The reply is scheduled against
+	// the AI scene: if the user leaves meanwhile (home button, another scene),
+	// the late message must NOT arrive on the menu and read as a live chat.
 	delay := time.Duration(700+rand.Intn(1800)) * time.Millisecond
 	go func() {
 		time.Sleep(delay)
-		_, _ = bc.Sender.Send(context.Background(), bc.ChatID, reply, nil, 0)
+		bc.SendIfStillInScene("ai", reply, nil)
 	}()
 	return true
 }

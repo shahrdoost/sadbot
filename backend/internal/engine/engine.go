@@ -79,8 +79,9 @@ type BotContext struct {
 	TelegramID    int64
 	ChatID        int64
 	MsgID         int64 // message_id of the inbound message (0 for callbacks)
+	IsCallback    bool  // the update is a button press, not typed text
 	Sender        Sender
-	AutoView      bool // replace-view navigation: keyboard screens replace each other
+	AutoView      bool           // replace-view navigation: keyboard screens replace each other
 	State         map[string]any // decoded state; mutate then SaveState
 	Data          map[string]any // DI bag for template stores (e.g. "dating")
 	texts         map[string]any
@@ -195,6 +196,7 @@ func (e *Engine) HandleUpdate(ctx context.Context, platform string, bot *domain.
 		// so templates can edit the message the callback button belongs to
 		bc.MsgID = upd.CallbackQuery.Message.MessageID
 	}
+	bc.IsCallback = upd.CallbackQuery != nil
 	if ah, ok := tpl.(ActionHandler); ok {
 		bc.actionHandler = ah
 	}
@@ -613,6 +615,31 @@ func mediaErr(err error) error {
 // a transient, retryable condition callers must NOT read as a dead partner.
 var ErrPlatformDown = errors.New("platform side not running")
 var ErrMediaUnsupported = errors.New("media forwarding is not supported")
+
+// StillInScene reports whether the user's PERSISTED state is still `scene`.
+// Delayed replies (AI think-time, ghost typing bubbles) capture the scene when
+// they are scheduled and must re-check it before sending: the user may have
+// left the scene meanwhile, and a late bubble would otherwise land on the home
+// menu — reading as «the chat is still going» long after it ended.
+func (bc *BotContext) StillInScene(scene string) bool {
+	raw, err := bc.users.GetState(context.Background(), bc.BotID, bc.UserID)
+	if err != nil {
+		return false
+	}
+	cur, _ := decodeState(raw)["scene"].(string)
+	return cur == scene
+}
+
+// SendIfStillInScene delivers a delayed message only while the user is still
+// in the scene it belongs to. Returns false when the scene changed (or the
+// send failed / the platform can't take a keyboard).
+func (bc *BotContext) SendIfStillInScene(scene, text string, kbd json.RawMessage) bool {
+	if !bc.StillInScene(scene) {
+		return false
+	}
+	_, err := bc.Sender.Send(context.Background(), bc.ChatID, text, kbd, 0)
+	return err == nil
+}
 
 // RecordInbound stores a synthetic inbound message for the current scene.
 // The engine never logs media updates (it only logs text), so templates that

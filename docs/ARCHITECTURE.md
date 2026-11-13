@@ -105,10 +105,11 @@ type Priced         interface { DefaultPrices() []byte }  // قیمت‌ها/ت�
 
 ### BotContext
 
-`Reply`/`ReplyKBD`/`ReplyKBDStyled`/`ReplyInline`/`SendPhotoKBD`/`SendTo`/`ForwardMediaTo`/`RecordInbound`/`State`/`Data`/`Prices`/`MsgID`
+`Reply`/`ReplyKBD`/`ReplyKBDStyled`/`ReplyInline`/`SendPhotoKBD`/`SendTo`/`ForwardMediaTo`/`RecordInbound`/`StillInScene`/`SendIfStillInScene`/`State`/`Data`/`Prices`/`MsgID`/`IsCallback`
 
 - **replace-view** (opt-in با `ViewReplaceable.ReplaceViews()` → `BotContext.AutoView`): صفحه‌های کیبورد/کارت یکدیگر را جایگزین میکنند — **send-then-delete** (پیام قبلی فقط بعد از فرودِ جایگزین حذف میشود؛ ارسال ناموفق = صفحهٔ قبلی میماند). tracking با `view_msg` در state؛ `UntrackView` برای پیام‌هایی که باید بمانند. `SendPhotoKBD` روی خطا به پیام متنی fallback میکند.
 - **دکمهٔ URL**: `engine.InlineButton{Label, Callback, URL}` — دکمه با `URL` بدون callback کار میکند (مثل لینک پرداخت).
+- **گارد صحنه برای ارسال تأخیری**: `StillInScene(name)` / `SendIfStillInScene(name, text, kbd)` صحنهٔ **ذخیره‌شده** را می‌خوانند. هر ارسال تأخیری (پاسخ دستیار AI، حباب‌های گوست) باید قبل از Send این را چک کند — وگرنه پیام روی منوی اصلی می‌نشیند و حس «چت هنوز ادامه دارد» می‌دهد. `IsCallback` هم مشخص می‌کند آپدیت پرس دکمه است نه متن تایپ‌شده (کت کیبورد reply را به inline با callback_data = برچسب تبدیل می‌کند).
 
 ## سیستم پرداخت یکپارچه
 
