@@ -137,8 +137,9 @@ def _copyable(text: str):
     """
     if not text:
         return text, None
-    text = _proxy_links(text)
-    cleaned = text.replace("```", "").replace("`", "")
+    # strip stray markdown emphasis first so block matching never sees **Server:**
+    text = text.replace("```", "").replace("**", "").replace("`", "")
+    cleaned = _proxy_links(text)
     entities = []
     # offsets must be computed on the post-substitution text: each
     # [label](url) collapses to label, shifting every later entity left

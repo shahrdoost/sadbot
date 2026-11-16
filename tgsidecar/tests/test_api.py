@@ -527,6 +527,24 @@ def test_proxy_url_host_gets_extracted():
     assert "c1c7b0001f2c" not in body, "URL-shaped server must not survive as plain text"
 
 
+def test_copyable_bold_block_rewritten():
+    from app.telegram_api import _copyable
+
+    text = (
+        "📡 **پروکسی MTProto**\n\n"
+        "**Server:** 1.2.3.4\n"
+        "**Port:** 443\n"
+        "**Secret:** EERighJJvXrFGRMCIMjdCQ"
+    )
+    body, ents = _copyable(text)
+    assert "**" not in body, "stray bold markers must not survive"
+    assert "1.2.3.4" not in body, "bolded block must still be rewritten"
+    urls = [e.url for e in (ents or []) if getattr(e, "url", None)]
+    assert urls == [
+        "https://t.me/proxy?server=1.2.3.4&port=443&secret=EERighJJvXrFGRMCIMjdCQ"
+    ]
+
+
 def test_proxy_links_in_text_leave_block_alone():
     from app.telegram_api import _copyable
 
