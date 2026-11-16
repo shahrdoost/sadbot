@@ -195,3 +195,79 @@ func TestOpsChannelPostsOnRejectedPayment(t *testing.T) {
 		}
 	}
 }
+
+// The operator must see a human handle, and a name must never print blank.
+func TestPayerDisplayNameFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Payer
+		want string
+	}{
+		{"full name wins", Payer{FirstName: "کوشان", LastName: "شهردوست", Username: "k", TelegramID: 5}, "کوشان شهردوست"},
+		{"profile name when no telegram name", Payer{ProfileID: "نگار", Username: "n", TelegramID: 5}, "نگار"},
+		{"username when no name", Payer{Username: "amir", TelegramID: 5}, "@amir"},
+		{"numeric id as last resort", Payer{TelegramID: 1780243204}, "1780243204"},
+		{"nothing at all stays empty", Payer{}, ""},
+	}
+	for _, tc := range cases {
+		if got := tc.in.DisplayName(); got != tc.want {
+			t.Errorf("%s: DisplayName() = %q (want %q)", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPayerReferenceCarriesIds(t *testing.T) {
+	p := Payer{Username: "amir", TelegramID: 1780243204}
+	if got := p.Reference(); got != "@amir — 1780243204" {
+		t.Errorf("Reference() = %q", got)
+	}
+	if got := (Payer{TelegramID: 42}).Reference(); got != "42" {
+		t.Errorf("id-only Reference() = %q", got)
+	}
+}
+
+// The channel post itself must carry the name, not just the id.
+func TestOpsChannelPostShowsUserName(t *testing.T) {
+	rec := &opsRecorder{}
+	store := newMemPayments()
+	svc := newOpsService(t, rec, store, newMemCoins())
+
+	botID := uuid.New()
+	userID := int64(7)
+	p, _ := svc.store.Create(context.Background(), &domain.Payment{
+		BotID: botID, UserID: &userID, AmountRials: 100_000,
+		Kind: KindCoinPackage, Gateway: "catroom", Status: "pending",
+		Coins: 1, PackageID: strptr("pkg_1"),
+	})
+
+	who := Payer{Platform: "kat", TelegramID: 1780243204, FirstName: "کوشان"}
+	svc.ops.PaymentSettled(context.Background(), p, who)
+
+	posts := rec.recorded()
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d", len(posts))
+	}
+	for _, want := range []string{"کاربر: کوشان", "شناسه: 1780243204", "کت (cr0.ir)"} {
+		if !strings.Contains(posts[0], want) {
+			t.Errorf("post missing %q:\n%s", want, posts[0])
+		}
+	}
+}
+
+// A platform that only knows a phone number must still produce a usable line.
+func TestExternalReportUserFallbacks(t *testing.T) {
+	cases := []struct{ name string; in ExternalReport; wantUser, wantRef string }{
+		{"phone only", ExternalReport{Phone: "+989121234567"}, "+989121234567", "+989121234567"},
+		{"username", ExternalReport{Username: "u1"}, "@u1", "@u1"},
+		{"full name + ids", ExternalReport{FirstName: "علی", LastName: "ر", Username: "a", UserID: "9"}, "علی ر", "@a — 9"},
+		{"raw id last", ExternalReport{UserID: "9"}, "9", "9"},
+	}
+	for _, tc := range cases {
+		if got := tc.in.displayUser(); got != tc.wantUser {
+			t.Errorf("%s: displayUser() = %q (want %q)", tc.name, got, tc.wantUser)
+		}
+		if got := tc.in.userReference(); got != tc.wantRef {
+			t.Errorf("%s: userReference() = %q (want %q)", tc.name, got, tc.wantRef)
+		}
+	}
+}

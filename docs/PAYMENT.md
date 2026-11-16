@@ -122,10 +122,13 @@ Authorization: Bearer <OPS_REPORT_TOKEN>
 Content-Type: application/json
 
 {"platform":"sadai","status":"success","amount":294998,
- "user":"u_42","item":"بستهٔ اعتبار","external_id":"pay_8812"}
+ "user":"u_42","first_name":"کوشان","username":"kooshan",
+ "phone":"+989121234567","user_id":"a1b2c3",
+ "item":"بستهٔ اعتبار","external_id":"pay_8812"}
 ```
 
 - `status`: `success` یا `failed`. `amount` به **تومان**. `at` اختیاری (RFC3339؛ پیش‌فرض «الان»).
+- **نام کاربر**: هر کدام از این‌ها را داری بفرست — `first_name`/`last_name`، `username`، `phone`، `user`، `user_id`. سطر «کاربر» به این ترتیب پر می‌شود: نام کامل → `user` → `@username` → شمارهٔ موبایل → `user_id`. بقیه در سطر «شناسه» می‌آید تا نامِ تکراری هم قابل ردیابی باشد. **هیچ‌کدام اجباری نیست ولی حداقل یکی بفرست** — با شناسهٔ محض، ادمین نمی‌فهمد کیست.
 - روت **عمومی** است ولی با توکن قفل می‌شود (`subtle.ConstantTimeCompare`؛ هدر `X-Ops-Token` هم پذیرفته می‌شود). بدون توکن → `401`. بدنهٔ بیش از ۸KiB، فیلد ناشناس، یا مبلغ منفی → `400`.
 - اگر کانال تنظیم نشده باشد، `200` با `{"ok":true,"skipped":"..."}` برمی‌گردد تا فرستنده بی‌دلیل retry نکند.
 

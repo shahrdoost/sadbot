@@ -69,7 +69,7 @@
 |---|---|---|
 | `GET /payments/callback` | **عمومی** | callback درگاه catroom.ir (hit سروری — خریدار دیگر به اینجا ریدایرکت نمیشود) |
 | `POST /payments/gateway-hook` | **عمومی** | هوک سرور-به-سرور درگاه (`{orderId, status}`) — تسویه را wake میکند؛ payload باور نمیشود، وضعیت دوباره استعلام میشود |
-| `POST /ops/payment-report` | **عمومی + Bearer** | گزارش پرداخت از پلتفرم‌های بیرونی (مثلاً sadgpt.ir) → کانال عملیات. هدر: `Authorization: Bearer <OPS_REPORT_TOKEN>` یا `X-Ops-Token`. بدنه: `{platform, status: success|failed, amount (تومان), user?, item?, detail?, external_id?, currency?, at?}`. بدون توکن → 401؛ بدنهٔ بزرگ‌تر از ۸KiB یا فیلد ناشناس → 400 |
+| `POST /ops/payment-report` | **عمومی + Bearer** | گزارش پرداخت از پلتفرم‌های بیرونی (مثلاً sadgpt.ir) → کانال عملیات. هدر: `Authorization: Bearer <OPS_REPORT_TOKEN>` یا `X-Ops-Token`. بدنه: `{platform, status: success|failed, amount (تومان), item?, detail?, external_id?, currency?, at?, user?, username?, first_name?, last_name?, phone?, user_id?}`. بدون توکن → 401؛ بدنهٔ بزرگ‌تر از ۸KiB یا فیلد ناشناس → 400 |
 
 ## Content (بات محتوا)
 

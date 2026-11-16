@@ -250,7 +250,7 @@ func main() {
 	gameCreditor := payment.NewGameCreditor(pool, datingRepo)
 	paySvc := payment.NewService(paymentRepo, gameCreditor, gateway, notifier, cfg.PaymentCallbackURL)
 	opsChannel := payment.NewOpsChannel(cfg.OpsBotToken, cfg.OpsChannelID, &botNamer{repo: botRepo})
-	paySvc.SetOpsChannel(opsChannel, &userLookup{repo: userRepo})
+	paySvc.SetOpsChannel(opsChannel, &userLookup{repo: userRepo, dating: datingRepo})
 	go payment.NewSweeper(paySvc).Run(ctx)
 	eng.SetData("payments", paySvc)
 	eng.SetData("paymentRepo", paymentRepo)
@@ -548,16 +548,38 @@ func (b *botNamer) BotName(ctx context.Context, botID uuid.UUID) string {
 	return bot.Name
 }
 
-// userLookup tells the operator channel which platform the buyer used, which
-// matters because the same person can exist on Telegram and on Kat.
-type userLookup struct{ repo *postgres.BotUserRepo }
+// userLookup gives the operator channel a human name for the buyer, plus the
+// ids needed to trace the payment back to a row.
+type userLookup struct {
+	repo   *postgres.BotUserRepo
+	dating *postgres.DatingRepo
+}
 
-func (u *userLookup) PlatformOf(ctx context.Context, botID uuid.UUID, userID int64) (string, string) {
+func (u *userLookup) WhoPaid(ctx context.Context, botID uuid.UUID, userID int64) payment.Payer {
 	user, err := u.repo.GetByID(ctx, botID, userID)
 	if err != nil || user == nil {
-		return "", ""
+		return payment.Payer{}
 	}
-	return user.Platform, fmt.Sprintf("%d", user.TelegramID)
+	p := payment.Payer{Platform: user.Platform, TelegramID: user.TelegramID}
+	if user.Username != nil {
+		p.Username = strings.TrimPrefix(*user.Username, "@")
+	}
+	if user.FirstName != nil {
+		p.FirstName = *user.FirstName
+	}
+	if user.LastName != nil {
+		p.LastName = *user.LastName
+	}
+	// A dating bot asks for a name the operator actually recognises; the
+	// Telegram profile name is often a phone number or an emoji.
+	if u.dating != nil {
+		if prof, err := u.dating.GetProfile(ctx, botID, userID); err == nil && prof != nil && prof.Name != nil {
+			if name := strings.TrimSpace(*prof.Name); name != "" && p.FirstName == "" {
+				p.ProfileID = name
+			}
+		}
+	}
+	return p
 }
 
 // runtimeNotifier sends payment-result messages via a running bot.

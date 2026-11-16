@@ -52,9 +52,53 @@ type Service struct {
 	users       UserLookup
 }
 
-// UserLookup resolves who paid, for the ops channel post.
+// UserLookup resolves who paid, for the ops channel post. The operator needs
+// a human handle, not a numeric id, plus the ids needed to trace the row.
 type UserLookup interface {
-	PlatformOf(ctx context.Context, botID uuid.UUID, userID int64) (platform, telegramID string)
+	WhoPaid(ctx context.Context, botID uuid.UUID, userID int64) Payer
+}
+
+// Payer is what the channel shows about the buyer. Every field is optional:
+// a Kat user has no @username, and a Telegram user may have hidden theirs.
+type Payer struct {
+	Platform   string
+	TelegramID int64
+	Username   string // without the leading @
+	FirstName  string
+	LastName   string
+	ProfileID  string // the readable identity the operator sees in the bot
+}
+
+// DisplayName falls back from a full name to @username to the numeric id, so
+// a post never shows a blank user.
+func (p Payer) DisplayName() string {
+	if name := strings.TrimSpace(p.FirstName + " " + p.LastName); name != "" {
+		return name
+	}
+	if p.ProfileID != "" {
+		return p.ProfileID
+	}
+	if p.Username != "" {
+		return "@" + p.Username
+	}
+	if p.TelegramID != 0 {
+		return fmt.Sprintf("%d", p.TelegramID)
+	}
+	return ""
+}
+
+// Reference is the id part shown next to the name, so a bare name can still
+// be traced back to a row.
+func (p Payer) Reference() string {
+	switch {
+	case p.Username != "" && p.TelegramID != 0:
+		return fmt.Sprintf("@%s — %d", p.Username, p.TelegramID)
+	case p.Username != "":
+		return "@" + p.Username
+	case p.TelegramID != 0:
+		return fmt.Sprintf("%d", p.TelegramID)
+	}
+	return ""
 }
 
 // SetOpsChannel attaches the operator notification channel. Optional: when
@@ -205,11 +249,11 @@ func (s *Service) reportFailure(ctx context.Context, p *domain.Payment, reason s
 	if s.ops == nil {
 		return
 	}
-	platform, telegramID := "", ""
+	var who Payer
 	if s.users != nil && p.UserID != nil {
-		platform, telegramID = s.users.PlatformOf(ctx, p.BotID, *p.UserID)
+		who = s.users.WhoPaid(ctx, p.BotID, *p.UserID)
 	}
-	s.ops.PaymentFailed(ctx, p, platform, telegramID, reason)
+	s.ops.PaymentFailed(ctx, p, who, reason)
 }
 
 // fulfill credits the user exactly once (CAS on pending→verified).
@@ -244,11 +288,11 @@ func (s *Service) fulfill(ctx context.Context, paymentID uuid.UUID) error {
 		return err
 	}
 	if s.ops != nil {
-		platform, telegramID := "", ""
+		var who Payer
 		if s.users != nil {
-			platform, telegramID = s.users.PlatformOf(ctx, p.BotID, *p.UserID)
+			who = s.users.WhoPaid(ctx, p.BotID, *p.UserID)
 		}
-		s.ops.PaymentSettled(ctx, p, platform, telegramID)
+		s.ops.PaymentSettled(ctx, p, who)
 	}
 	if s.notifier != nil {
 		text := fmt.Sprintf("✅ پرداخت تایید شد!\n+%d سکه به حسابت اضافه شد.", p.Coins)

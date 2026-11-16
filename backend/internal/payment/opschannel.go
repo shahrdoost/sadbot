@@ -41,10 +41,25 @@ func NewOpsChannelWithClient(client *telegram.Client, chatID string, bots BotNam
 
 // PaymentSettled posts the notice. Failures are logged and swallowed: an
 // unreachable ops channel must never affect a payment the buyer has paid.
-func (o *OpsChannel) PaymentSettled(ctx context.Context, p *domain.Payment, platform, telegramID string) {
+func (o *OpsChannel) PaymentSettled(ctx context.Context, p *domain.Payment, who Payer) {
 	if o == nil || p == nil {
 		return
 	}
+	o.paymentPost(ctx, p, who, true, "")
+}
+
+// PaymentFailed posts the notice for a payment that did not complete, so a
+// bot whose gateway rejects it — or whose buyer walks away — leaves a trail.
+func (o *OpsChannel) PaymentFailed(ctx context.Context, p *domain.Payment, who Payer, reason string) {
+	if o == nil || p == nil {
+		return
+	}
+	o.paymentPost(ctx, p, who, false, reason)
+}
+
+// paymentPost is the one shape both outcomes share, so a failure and a success
+// can be compared line by line in the channel.
+func (o *OpsChannel) paymentPost(ctx context.Context, p *domain.Payment, who Payer, settled bool, reason string) {
 	name := ""
 	if o.bots != nil {
 		name = o.bots.BotName(ctx, p.BotID)
@@ -54,14 +69,20 @@ func (o *OpsChannel) PaymentSettled(ctx context.Context, p *domain.Payment, plat
 	}
 
 	var b strings.Builder
-	b.WriteString("💳 پرداخت موفق\n")
+	if settled {
+		b.WriteString("💳 پرداخت موفق\n")
+	} else {
+		b.WriteString("⚠️ پرداخت ناموفق\n")
+	}
 	fmt.Fprintf(&b, "بات: %s\n", name)
-	if platform != "" {
-		fmt.Fprintf(&b, "پلتفرم: %s", platform)
-		if telegramID != "" {
-			fmt.Fprintf(&b, " — %s", telegramID)
-		}
-		b.WriteString("\n")
+	if line := who.DisplayName(); line != "" {
+		fmt.Fprintf(&b, "کاربر: %s\n", line)
+	}
+	if ref := who.Reference(); ref != "" {
+		fmt.Fprintf(&b, "شناسه: %s\n", ref)
+	}
+	if who.Platform != "" {
+		fmt.Fprintf(&b, "پلتفرم: %s\n", displayPlatform(who.Platform))
 	}
 	fmt.Fprintf(&b, "مبلغ: %s تومان\n", thousands(p.AmountRials/10))
 	switch p.Kind {
@@ -70,40 +91,12 @@ func (o *OpsChannel) PaymentSettled(ctx context.Context, p *domain.Payment, plat
 		if p.PackageID != nil {
 			pkg = *p.PackageID
 		}
-		fmt.Fprintf(&b, "نوع: %s سکه (بستهٔ %s)\n", thousands(int64(p.Coins)), pkg)
+		fmt.Fprintf(&b, "مورد: %s سکه (بستهٔ %s)\n", thousands(int64(p.Coins)), pkg)
 	case KindSubscription:
-		b.WriteString("نوع: اشتراک ۳۰ روزه\n")
+		b.WriteString("مورد: اشتراک ۳۰ روزه\n")
 	default:
-		fmt.Fprintf(&b, "نوع: %s\n", p.Kind)
+		fmt.Fprintf(&b, "مورد: %s\n", p.Kind)
 	}
-	fmt.Fprintf(&b, "زمان: %s", p.CreatedAt.In(tehran()).Format("2006-01-02 15:04"))
-
-	o.post(ctx, b.String(), p.ID.String())
-}
-
-// PaymentFailed posts the notice for a payment that did not complete, so a
-// bot whose gateway or expires leaves a trail instead of failing quietly.
-func (o *OpsChannel) PaymentFailed(ctx context.Context, p *domain.Payment, platform, telegramID, reason string) {
-	if o == nil || p == nil {
-		return
-	}
-	name := ""
-	if o.bots != nil {
-		name = o.bots.BotName(ctx, p.BotID)
-	}
-	if name == "" {
-		name = p.BotID.String()[:8]
-	}
-
-	var b strings.Builder
-	b.WriteString("⚠️ پرداخت ناموفق\n")
-	fmt.Fprintf(&b, "بات: %s\n", name)
-	fmt.Fprintf(&b, "پلتفرم: %s", platform)
-	if telegramID != "" {
-		fmt.Fprintf(&b, " — %s", telegramID)
-	}
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "مبلغ: %s تومان\n", thousands(p.AmountRials/10))
 	if reason != "" {
 		fmt.Fprintf(&b, "علت: %s\n", reason)
 	}
@@ -120,11 +113,54 @@ type ExternalReport struct {
 	Status     string `json:"status"` // "success" | "failed"
 	Amount     int64  `json:"amount"` // tomans
 	Currency   string `json:"currency,omitempty"`
+	// User is the human handle. The first non-empty of these wins, so a
+	// platform that has only a phone number can still send something the
+	// operator recognises.
 	User       string `json:"user,omitempty"`
+	Username   string `json:"username,omitempty"`
+	FirstName  string `json:"first_name,omitempty"`
+	LastName   string `json:"last_name,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	UserID     string `json:"user_id,omitempty"`
 	Item       string `json:"item,omitempty"`   // what was bought
 	Detail     string `json:"detail,omitempty"` // free text: plan, tokens, error
 	ExternalID string `json:"external_id,omitempty"`
 	At         string `json:"at,omitempty"` // RFC3339; defaults to now
+}
+
+// displayUser picks the most human identifier available, in the order the
+// operator finds useful: a real name, then a @username, then a phone number,
+// then a raw id.
+func (r ExternalReport) displayUser() string {
+	if name := strings.TrimSpace(r.FirstName + " " + r.LastName); name != "" {
+		return name
+	}
+	if r.User != "" {
+		return r.User
+	}
+	if r.Username != "" {
+		return "@" + strings.TrimPrefix(r.Username, "@")
+	}
+	if r.Phone != "" {
+		return r.Phone
+	}
+	return r.UserID
+}
+
+// userReference keeps whatever else identifies the payer, so a display name
+// that repeats across users can still be traced.
+func (r ExternalReport) userReference() string {
+	var parts []string
+	if r.Username != "" {
+		parts = append(parts, "@"+strings.TrimPrefix(r.Username, "@"))
+	}
+	if r.Phone != "" {
+		parts = append(parts, r.Phone)
+	}
+	if r.UserID != "" {
+		parts = append(parts, r.UserID)
+	}
+	return strings.Join(parts, " — ")
 }
 
 // PaymentReported posts a payment another platform told us about.
@@ -144,8 +180,11 @@ func (o *OpsChannel) PaymentReported(ctx context.Context, r ExternalReport) {
 		currency = "تومان"
 	}
 	fmt.Fprintf(&b, "مبلغ: %s %s\n", thousands(r.Amount), currency)
-	if r.User != "" {
-		fmt.Fprintf(&b, "کاربر: %s\n", r.User)
+	if who := r.displayUser(); who != "" {
+		fmt.Fprintf(&b, "کاربر: %s\n", who)
+	}
+	if ref := r.userReference(); ref != "" {
+		fmt.Fprintf(&b, "شناسهٔ کاربر: %s\n", ref)
 	}
 	if r.Item != "" {
 		fmt.Fprintf(&b, "مورد: %s\n", r.Item)
@@ -154,7 +193,7 @@ func (o *OpsChannel) PaymentReported(ctx context.Context, r ExternalReport) {
 		fmt.Fprintf(&b, "جزئیات: %s\n", r.Detail)
 	}
 	if r.ExternalID != "" {
-		fmt.Fprintf(&b, "شناسه: %s\n", r.ExternalID)
+		fmt.Fprintf(&b, "شمارهٔ تراکنش: %s\n", r.ExternalID)
 	}
 	at := time.Now()
 	if r.At != "" {
