@@ -357,12 +357,40 @@ function TicketsTab({ botId }: { botId: string }) {
       <div className="space-y-3">
         {data?.tickets.map((t) => (
           <div key={t.id} className="card p-4">
-            <div className="text-slate-700 dark:text-slate-200">{t.message}</div>
-            {t.admin_reply && (
-              <div className="mt-2 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg text-sm text-slate-600 dark:text-slate-300 border-s-2 border-brand-400">
-                پاسخ ادمین: {t.admin_reply}
+            <div className="space-y-2">
+              <div className="flex gap-2 items-start">
+                <span className="text-xs px-1.5 py-0.5 rounded shrink-0 bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400">کاربر</span>
+                <div className="text-slate-700 dark:text-slate-200">{t.message}</div>
               </div>
-            )}
+              {t.messages?.map((m) => (
+                <div key={m.id} className="flex gap-2 items-start">
+                  <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${
+                    m.sender === 'admin'
+                      ? 'bg-brand-100 text-brand-600 dark:bg-brand-600/30 dark:text-brand-400'
+                      : 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                  }`}>
+                    {m.sender === 'admin' ? 'ادمین' : 'کاربر'}
+                  </span>
+                  <div className={`rounded-lg px-3 py-2 text-sm border-s-2 ${
+                    m.sender === 'admin'
+                      ? 'bg-slate-50 dark:bg-slate-900 border-brand-400 text-slate-600 dark:text-slate-300'
+                      : 'bg-slate-50 dark:bg-slate-900 border-green-400 text-slate-700 dark:text-slate-200'
+                  }`}>
+                    {m.body}
+                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">{formatDateFa(m.created_at)}</div>
+                  </div>
+                </div>
+              ))}
+              {/* replies recorded before the thread table existed still show */}
+              {!t.messages?.length && t.admin_reply && (
+                <div className="flex gap-2 items-start">
+                  <span className="text-xs px-1.5 py-0.5 rounded shrink-0 bg-brand-100 text-brand-600 dark:bg-brand-600/30 dark:text-brand-400">ادمین</span>
+                  <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg text-sm text-slate-600 dark:text-slate-300 border-s-2 border-brand-400">
+                    {t.admin_reply}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="flex items-center justify-between mt-3 gap-3 flex-wrap">
               <div className="text-xs text-slate-400 dark:text-slate-500">{t.username ? `@${t.username}` : t.first_name ? t.first_name : `کاربر #${t.user_id}`} · {formatDateFa(t.created_at)}</div>
               <div className="flex gap-2 items-center">

@@ -3,8 +3,10 @@ package dating
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
+	"sadbot/internal/domain"
 	"sadbot/internal/engine"
 	"sadbot/internal/repository/postgres"
 )
@@ -110,14 +112,48 @@ func clearConfessState(bc *engine.BotContext) {
 
 // --- support tickets ---
 
+const (
+	supportActionContinue = "act:support:continue:"
+	supportActionClose    = "act:support:close:"
+	supportActionNew      = "act:support:new"
+)
+
+// startSupport opens the support scene on the user's open ticket when there is
+// one, so a follow-up lands in the same conversation instead of a new ticket.
 func startSupport(bc *engine.BotContext) bool {
 	bc.State["scene"] = "support"
 	bc.State["step"] = "support_msg"
 	bc.SaveState()
-	bc.ReplyKBD(
-		"📩 پشتیبانی\n\nپیامت رو بنویس و بفرست؛ ادمین‌ها می‌بینن و جواب میدن.\n\nبرای خروج: 🏠 منوی اصلی",
-		supportRows)
+	open := openTicket(bc)
+	if open == nil {
+		bc.ReplyKBD(
+			"📩 پشتیبانی\n\nپیامت رو بنویس و بفرست؛ ادمین‌ها می‌بینن و جواب میدن.\n\nبرای خروج: 🏠 منوی اصلی",
+			supportRows)
+		return true
+	}
+	// one open ticket at a time: default to continuing it, with a way out to a
+	// fresh ticket for a different topic
+	bc.ReplyInline(
+		fmt.Sprintf("📩 پشتیبانی\n\nیک تیکت باز داری؛ هرچی بنویسی به همان اضافه می‌شود.\nبرای موضوع جدید، «تیکت جدید» را بزن."),
+		[][]engine.InlineButton{{
+			{Label: "📝 تیکت جدید", Callback: supportActionNew},
+			{Label: "🏠 منوی اصلی", Callback: "act:support:home"},
+		}})
 	return true
+}
+
+// openTicket returns the user's non-closed ticket, or nil.
+func openTicket(bc *engine.BotContext) *domain.SupportTicket {
+	repo := moderationRepoOf(bc)
+	if repo == nil {
+		return nil
+	}
+	t, err := repo.OpenTicketForUser(engineBG(), botUUID(bc), bc.UserID)
+	if err != nil {
+		log.Printf("[dating] open ticket lookup: %v", err)
+		return nil
+	}
+	return t
 }
 
 func handleSupportText(bc *engine.BotContext, st *Store, text string) bool {
@@ -141,11 +177,103 @@ func handleSupportText(bc *engine.BotContext, st *Store, text string) bool {
 		bc.ReplyKBD("متن پیام باید حداقل ۳ حرف باشه. دوباره بنویس.", supportRows)
 		return true
 	}
+	// an open ticket absorbs the message; a fresh one only starts when the
+	// user asked for it or has nothing open
+	if open := openTicket(bc); open != nil && dataMap(bc)["ticket_fresh"] != true {
+		if _, err := repo.AddUserMessage(engineBG(), botUUID(bc), open.ID, body); err != nil {
+			log.Printf("[dating] ticket message: %v", err)
+			bc.ReplyKBD("خطا در ثبت پیام. دوباره تلاش کن.", supportRows)
+			return true
+		}
+		delete(dataMap(bc), "ticket_fresh")
+		bc.SaveState()
+		goHome(bc, "✅ پیامت به تیکت اضافه شد؛ ادمین‌ها جواب میدن.")
+		return true
+	}
 	if _, err := repo.InsertTicket(engineBG(), botUUID(bc), bc.UserID, body); err != nil {
 		log.Printf("[dating] ticket insert: %v", err)
 		bc.ReplyKBD("خطا در ثبت پیام. دوباره تلاش کن.", supportRows)
 		return true
 	}
+	delete(dataMap(bc), "ticket_fresh")
+	bc.SaveState()
 	goHome(bc, "✅ پیامت ثبت شد؛ ادمین‌ها به‌زودی جواب میدن.")
 	return true
+}
+
+// handleSupportAction routes the buttons attached to a support reply:
+// continue the same ticket, close it, or start a fresh one.
+func handleSupportAction(bc *engine.BotContext, action string) bool {
+	repo := moderationRepoOf(bc)
+	if repo == nil {
+		goHome(bc, "پشتیبانی فعلاً در دسترس نیست.")
+		return true
+	}
+	switch {
+	case action == "support:home":
+		goHome(bc, "🏠 منوی اصلی")
+		return true
+
+	case action == "support:new":
+		bc.State["scene"] = "support"
+		bc.State["step"] = "support_msg"
+		dataMap(bc)["ticket_fresh"] = true
+		bc.SaveState()
+		bc.ReplyKBD(
+			"📝 تیکت جدید\n\nپیامت رو بنویس و بفرست.\n\nبرای خروج: 🏠 منوی اصلی",
+			supportRows)
+		return true
+
+	case strings.HasPrefix(action, "support:continue:"):
+		id, err := strconv.ParseInt(strings.TrimPrefix(action, "support:continue:"), 10, 64)
+		if err != nil {
+			return fallbackAction(bc)
+		}
+		t, err := repo.TicketByID(engineBG(), botUUID(bc), id)
+		if err != nil || t == nil {
+			goHome(bc, "این تیکت پیدا نشد.")
+			return true
+		}
+		if t.Status == domain.TicketClosed {
+			bc.ReplyInline("🔒 این تیکت بسته شده.\nبرای پیام جدید، تیکت تازه باز کن.",
+				[][]engine.InlineButton{{
+					{Label: "📝 تیکت جدید", Callback: supportActionNew},
+					{Label: "🏠 منوی اصلی", Callback: "act:support:home"},
+				}})
+			return true
+		}
+		bc.State["scene"] = "support"
+		bc.State["step"] = "support_msg"
+		delete(dataMap(bc), "ticket_fresh")
+		bc.SaveState()
+		bc.ReplyKBD(
+			"✍️ ادامهٔ گفتگو\n\nپاسخ خودت رو بنویس و بفرست؛ به همین تیکت اضافه می‌شود.\n\nبرای خروج: 🏠 منوی اصلی",
+			supportRows)
+		return true
+
+	case strings.HasPrefix(action, "support:close:"):
+		id, err := strconv.ParseInt(strings.TrimPrefix(action, "support:close:"), 10, 64)
+		if err != nil {
+			return fallbackAction(bc)
+		}
+		ok, err := repo.CloseTicket(engineBG(), botUUID(bc), id)
+		if err != nil || !ok {
+			bc.ReplyInline("این تیکت دیگر باز نیست.",
+				[][]engine.InlineButton{{
+					{Label: "📝 تیکت جدید", Callback: supportActionNew},
+					{Label: "🏠 منوی اصلی", Callback: "act:support:home"},
+				}})
+			return true
+		}
+		bc.State["scene"] = "home"
+		bc.State["step"] = ""
+		bc.SaveState()
+		bc.ReplyInline("🔒 تیکت بسته شد. اگر موضوع جدیدی داری، تیکت تازه باز کن.",
+			[][]engine.InlineButton{{
+				{Label: "📝 تیکت جدید", Callback: supportActionNew},
+				{Label: "🏠 منوی اصلی", Callback: "act:support:home"},
+			}})
+		return true
+	}
+	return fallbackAction(bc)
 }

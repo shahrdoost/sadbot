@@ -213,6 +213,13 @@ export interface Confession {
   created_at: string
 }
 
+export interface TicketMessage {
+  id: number
+  sender: 'user' | 'admin'
+  body: string
+  created_at: string
+}
+
 export interface SupportTicket {
   id: number
   bot_id: string
@@ -223,6 +230,9 @@ export interface SupportTicket {
   admin_reply?: string
   status: 'open' | 'answered' | 'closed'
   created_at: string
+  replied_at?: string
+  /** the thread after the opening message, oldest first */
+  messages?: TicketMessage[]
 }
 
 export interface DatingUser {

@@ -253,6 +253,9 @@ func (t *Template) HandleAction(bc *engine.BotContext, action string) bool {
 	if strings.HasPrefix(action, "notify:") {
 		return handleNotificationAction(bc, st, action) || fallbackAction(bc)
 	}
+	if strings.HasPrefix(action, "support:") {
+		return handleSupportAction(bc, action)
+	}
 
 	switch {
 	case action == "wallet":

@@ -32,7 +32,8 @@ type Confession struct {
 	PublishedMsgID *int64     `json:"published_msg_id,omitempty"`
 }
 
-// SupportTicket is a user message routed to the bot admins.
+// SupportTicket is a user message routed to the bot admins. Message is the
+// opening message; the rest of the conversation lives in Messages.
 type SupportTicket struct {
 	ID         int64      `json:"id"`
 	BotID      uuid.UUID  `json:"bot_id"`
@@ -44,4 +45,15 @@ type SupportTicket struct {
 	Status     string     `json:"status"`
 	CreatedAt  time.Time  `json:"created_at"`
 	RepliedAt  *time.Time `json:"replied_at,omitempty"`
+	// Messages is the thread oldest-first, opening message excluded (it stays
+	// in Message). Empty for tickets that never got a reply.
+	Messages []TicketMessage `json:"messages"`
+}
+
+// TicketMessage is one turn of a support ticket. Sender is "user" or "admin".
+type TicketMessage struct {
+	ID        int64     `json:"id"`
+	Sender    string    `json:"sender"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
 }

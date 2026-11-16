@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"sadbot/internal/domain"
 
@@ -137,18 +138,81 @@ func (r *ModerationRepo) ListTickets(ctx context.Context, botID uuid.UUID, statu
 		if err := rows.Scan(&t.ID, &t.BotID, &t.UserID, &t.Username, &t.FirstName, &t.Message, &t.AdminReply, &t.Status, &t.CreatedAt, &t.RepliedAt); err != nil {
 			return nil, 0, err
 		}
+		t.Messages = []domain.TicketMessage{}
 		out = append(out, *t)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// one extra round trip for the page's threads instead of N per ticket
+	if len(out) > 0 {
+		ids := make([]int64, len(out))
+		for i := range out {
+			ids[i] = out[i].ID
+		}
+		threads, err := r.ticketThreads(ctx, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range out {
+			if m := threads[out[i].ID]; m != nil {
+				out[i].Messages = m
+			}
+		}
+	}
+	return out, total, nil
 }
 
-// ReplyTicket records the admin reply (CAS open|answered → answered).
+// ticketThreads loads the threads of several tickets at once, keyed by ticket id.
+func (r *ModerationRepo) ticketThreads(ctx context.Context, ids []int64) (map[int64][]domain.TicketMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT ticket_id, id, sender, body, created_at FROM support_ticket_messages
+		WHERE ticket_id = ANY($1) ORDER BY ticket_id, created_at, id`,
+		ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64][]domain.TicketMessage, len(ids))
+	for rows.Next() {
+		var ticketID int64
+		var m domain.TicketMessage
+		if err := rows.Scan(&ticketID, &m.ID, &m.Sender, &m.Body, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out[ticketID] = append(out[ticketID], m)
+	}
+	return out, rows.Err()
+}
+
+// ReplyTicket records the admin reply (CAS open|answered → answered) and
+// appends it to the thread in the same transaction, so the panel and the bot
+// never disagree about what was said.
 func (r *ModerationRepo) ReplyTicket(ctx context.Context, botID uuid.UUID, id int64, reply string) (*domain.SupportTicket, error) {
-	return scanTicket(r.db.QueryRow(ctx, `
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	t, err := scanTicket(tx.QueryRow(ctx, `
 		UPDATE support_tickets SET admin_reply = $3, status = 'answered', replied_at = now()
 		WHERE id = $1 AND bot_id = $2 AND status IN ('open','answered')
 		RETURNING `+ticketCols,
 		id, botID, reply))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO support_ticket_messages (ticket_id, sender, body) VALUES ($1, 'admin', $2)`,
+		id, reply); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	t.Messages = []domain.TicketMessage{}
+	return t, nil
 }
 
 // CloseTicket closes a ticket (any non-closed state).
@@ -161,4 +225,81 @@ func (r *ModerationRepo) CloseTicket(ctx context.Context, botID uuid.UUID, id in
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// TicketByID loads one ticket regardless of status.
+func (r *ModerationRepo) TicketByID(ctx context.Context, botID uuid.UUID, id int64) (*domain.SupportTicket, error) {
+	return scanTicket(r.db.QueryRow(ctx, `
+		SELECT `+ticketCols+` FROM support_tickets WHERE id = $1 AND bot_id = $2`,
+		id, botID))
+}
+
+// OpenTicketForUser returns the user's most recent ticket that is not closed,
+// or nil when they have none. The bot uses it to keep «پشتیبانی» in one thread
+// instead of opening a second ticket on every visit.
+func (r *ModerationRepo) OpenTicketForUser(ctx context.Context, botID uuid.UUID, userID int64) (*domain.SupportTicket, error) {
+	t, err := scanTicket(r.db.QueryRow(ctx, `
+		SELECT `+ticketCols+` FROM support_tickets
+		WHERE bot_id = $1 AND user_id = $2 AND status <> 'closed'
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		botID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// TicketMessages is the thread of one ticket, oldest first.
+func (r *ModerationRepo) TicketMessages(ctx context.Context, ticketID int64) ([]domain.TicketMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, sender, body, created_at FROM support_ticket_messages
+		WHERE ticket_id = $1 ORDER BY created_at, id`,
+		ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.TicketMessage{}
+	for rows.Next() {
+		var m domain.TicketMessage
+		if err := rows.Scan(&m.ID, &m.Sender, &m.Body, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// AddUserMessage appends a user turn to the thread and puts the ticket back in
+// the admins' queue (answered → open). Returns false when the ticket is closed.
+func (r *ModerationRepo) AddUserMessage(ctx context.Context, botID uuid.UUID, id int64, body string) (bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE support_tickets SET status = 'open'
+		WHERE id = $1 AND bot_id = $2 AND status <> 'closed'`,
+		id, botID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO support_ticket_messages (ticket_id, sender, body) VALUES ($1, 'user', $2)`,
+		id, body); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }

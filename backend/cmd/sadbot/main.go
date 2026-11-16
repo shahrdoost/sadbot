@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -388,6 +389,28 @@ func main() {
 		return msg.MessageID, nil
 	}
 	moderationSvc := service.NewModerationService(moderationRepo, sendToUser, postToChannel)
+	// support replies carry the conversation buttons, so the user answers in
+	// the same ticket (or closes it / opens a new one) right from the message
+	moderationSvc.SetTicketNotifier(func(c context.Context, botID uuid.UUID, userID int64, text string, ticketID int64) error {
+		u, err := userRepo.GetByID(c, botID, userID)
+		if err != nil || u == nil {
+			return err
+		}
+		client, ok := runtimeMgr.ClientForPlatform(botID, u.Platform)
+		if !ok {
+			return nil
+		}
+		markup, _ := json.Marshal(map[string]any{
+			"inline_keyboard": [][]map[string]string{
+				{{"text": "✍️ ادامهٔ گفتگو", "callback_data": fmt.Sprintf("act:support:continue:%d", ticketID)}},
+				{{"text": "🔒 بستن تیکت", "callback_data": fmt.Sprintf("act:support:close:%d", ticketID)}},
+			},
+		})
+		_, err = client.SendMessage(c, telegram.SendMessagePayload{
+			ChatID: u.TelegramID, Text: text, ReplyMarkup: markup,
+		})
+		return err
+	})
 	moderationH := handlers.NewModerationHandler(moderationSvc)
 	panelH := handlers.NewPanelHandler(datingRepo, broadcastSvc, discountRepo, userRepo, moderationRepo)
 

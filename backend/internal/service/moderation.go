@@ -19,6 +19,16 @@ type ModerationService struct {
 	repo   *postgres.ModerationRepo
 	sendTo func(ctx context.Context, botID uuid.UUID, userID int64, text string) error
 	post   func(ctx context.Context, botID uuid.UUID, text string) (int64, error) // channel post; (0,nil) when unconfigured
+	// sendTicketDM delivers a support reply with its inline buttons, so the
+	// user can answer in the same ticket or close it from the message itself.
+	sendTicketDM func(ctx context.Context, botID uuid.UUID, userID int64, text string, ticketID int64) error
+}
+
+// SetTicketNotifier wires the bot-facing delivery for support replies. It is
+// set after construction because it needs the same runtime closure as the
+// other admin actions.
+func (s *ModerationService) SetTicketNotifier(fn func(ctx context.Context, botID uuid.UUID, userID int64, text string, ticketID int64) error) {
+	s.sendTicketDM = fn
 }
 
 func NewModerationService(
@@ -91,12 +101,26 @@ func (s *ModerationService) ReplyTicket(ctx context.Context, botID uuid.UUID, id
 		}
 		return err
 	}
-	if s.sendTo != nil {
+	// the reply is a conversation turn, not a dead end: it carries «ادامه» and
+	// «بستن» buttons so the user answers inside this ticket
+	if s.sendTicketDM != nil {
+		_ = s.sendTicketDM(ctx, botID, t.UserID, "📩 پاسخ پشتیبانی:\n\n"+reply, t.ID)
+	} else if s.sendTo != nil {
 		_ = s.sendTo(ctx, botID, t.UserID, "📩 پاسخ پشتیبانی:\n\n"+reply)
 	}
 	return nil
 }
 
+// ContinueTicket appends the user's answer to an open ticket and returns it to
+// the admins' queue. Reports ok=false when the ticket is closed or unknown.
+func (s *ModerationService) ContinueTicket(ctx context.Context, botID uuid.UUID, id int64, body string) (bool, error) {
+	if body == "" {
+		return false, fmt.Errorf("متن پیام خالی است")
+	}
+	return s.repo.AddUserMessage(ctx, botID, id, body)
+}
+
+// CloseTicket closes a ticket (any non-closed state).
 func (s *ModerationService) CloseTicket(ctx context.Context, botID uuid.UUID, id int64) error {
 	ok, err := s.repo.CloseTicket(ctx, botID, id)
 	if err != nil {

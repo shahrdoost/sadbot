@@ -47,6 +47,9 @@ audit_logs
 ### `admin_bot_access`
 `admin_id + bot_id` UNIQUE — `permissions: text[]` (`bot:read`, `bot:users`, `bot:config`, `bot:finance`, `bot:runtime`)
 
+### `support_tickets` / `support_ticket_messages`
+تیکت پشتیبانی: `support_tickets` پیام آغازین + `status` (`open`|`answered`|`closed`) + `admin_reply` (آخرین پاسخ، برای سازگاری)؛ `support_ticket_messages` کل گفتگو (`sender` = `user`|`admin`، `body`، `created_at`). بستن تیکت با `status=closed`.
+
 ### `audit_logs`
 `action`, `target_type`, `target_id`, `details jsonb`, `ip`
 

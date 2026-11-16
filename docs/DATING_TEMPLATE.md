@@ -122,7 +122,7 @@ state در `bot_end_users.state` (JSONB): `scene` + `step` + `data`.
 ## اعتراف و پشتیبانی
 
 - **اعتراف ناشناس**: متن ≥۵ حرف → پیش‌نمایش → تایید (`confess_cost`) → ثبت برای تایید ادمین (پنل) → انتشار در کانال + اطلاع به کاربر. کاربران نمونه هم اعتراف تولید میکنند (seed).
-- **پشتیبانی**: متن ≥۳ حرف → تیکت (پنل) + پاسخ ادمین از پنل به چت کاربر. **فقط متن تایپ‌شده تیکت می‌شود** — پرس دکمه هرگز بدنهٔ تیکت نیست (`bc.IsCallback` گارد می‌کند). ریشه: کت هر پرس کیبورد را callback با `data` = برچسب می‌فرستد، پس دکمهٔ یک صفحهٔ قدیمی (مثل «📞 پشتیبانی» یا «👤 مشخصات من») مستقیم به‌عنوان متن تیکت ذخیره می‌شد و صندوق ادمین از برچسب پر می‌شد نه از پیام کاربر.
+- **پشتیبانی (گفتگوی تیکتی، ۲۰۲۶-۱۱-۱۶)**: متن ≥۳ حرف → تیکت (پنل). پاسخ ادمین از پنل به چت کاربر می‌رود و **دو دکمهٔ inline** همراه دارد: «✍️ ادامهٔ گفتگو» (`act:support:continue:<id>`) و «🔒 بستن تیکت» (`act:support:close:<id>`). کاربر پاسخش را داخل همان تیکت می‌نویسد (تیکت از `answered` به `open` برمی‌گردد و در صف ادمین می‌نشیند) یا تیکت را می‌بندد. با تیکت باز، زدن «📩 پشتیبانی» پیام را به همان تیکت اضافه می‌کند و فقط «📝 تیکت جدید» (`act:support:new`) تیکت تازه می‌سازد; دکمهٔ کهنه روی تیکت بسته رد می‌شود. هر نوبت گفتگو در `support_ticket_messages` ثبت می‌شود (migration 0015) و پنل کل رشته را نشان می‌دهد. **فقط متن تایپ‌شده تیکت می‌شود** — پرس دکمه هرگز بدنهٔ تیکت نیست (`bc.IsCallback` گارد می‌کند). ریشه: کت هر پرس کیبورد را callback با `data` = برچسب می‌فرستد، پس دکمهٔ یک صفحهٔ قدیمی (مثل «📞 پشتیبانی» یا «👤 مشخصات من») مستقیم به‌عنوان متن تیکت ذخیره می‌شد و صندوق ادمین از برچسب پر می‌شد نه از پیام کاربر.
 
 ## دستیار هوشمند (`🤖 چت با دستیار`)
 
@@ -152,6 +152,7 @@ quota رایگان (`ai_free_messages`) بعد هر پیام `ai_message_cost` (
 - `internal/payment/expiry_test.go` — انقضای پرداخت دقیقاً یک بار (رفع اسپم).
 - `scene_guard_test.go` — `TestAILateReplyDroppedAfterLeavingScene` (پاسخ دیررس دستیار بعد از خروج از صحنه نباید روی منو بنشیند)؛ مکمل engine: `internal/engine/scene_guard_test.go` — `TestSceneGuardAgainstPersistedState`.
 - `support_ticket_test.go` — `TestSupportTicketRejectsLabelPress` (پرس دکمه تیکت نمی‌شود).
+- `ticket_thread_test.go` — `TestTicketThreadLoop` (پاسخ ادمین → ادامه در همان تیکت → بازگشت به صف → بستن → تیکت جدید)، `TestSupportSceneContinuesOpenTicket` (تیکت باز جذب می‌کند، «تیکت جدید» جدا می‌سازد)، `TestTicketContinueRejectsClosed` (دکمهٔ کهنه تیکت بسته را زنده نمی‌کند).
 - `ai_gate_test.go` — `TestAIGateFromPanel` (کلید panel) + `TestAssistantHiddenFromHomeWhenDisabled` (حذف دکمه از منو و بازگشتش).
 - **قفل‌های replace-view / کت (۲۰۲۶-۱۱-۱۱)**: `TestReplaceViewNavigation`، `TestFailedSendKeepsPreviousView` (ارسال ناموفق صفحه را پاک نکند)، `TestPhotoFailureFallsBackToTextCard`، `TestBrowseAdvanceKeepsCardOnSendFailure`، `TestChatHomeButtonLeavesChat` (دکمهٔ خروج چت رله نشود)، `TestRatingViaKatCallback` (ستاره به‌صورت callback کت)، `TestChannelLinkPerPlatform`، `TestChannelMissionKatTrustsTap`.
 

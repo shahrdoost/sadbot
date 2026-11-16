@@ -88,8 +88,8 @@
 | `GET /bots/{botID}/confessions` | `bot:read` | اعتراف‌ها |
 | `POST /bots/{botID}/confessions/{id}/approve` | `bot:config` | تایید |
 | `POST /bots/{botID}/confessions/{id}/reject` | `bot:config` | رد |
-| `GET /bots/{botID}/tickets` | `bot:read` | تیکت‌ها |
-| `POST /bots/{botID}/tickets/{id}/reply` | `bot:config` | پاسخ |
+| `GET /bots/{botID}/tickets` | `bot:read` | تیکت‌ها + `messages` (رشتهٔ گفتگو، قدیمی→جدید) |
+| `POST /bots/{botID}/tickets/{id}/reply` | `bot:config` | پاسخ ادمین (به رشته اضافه می‌شود؛ به کاربر با دکمه‌های ادامه/بستن می‌رود) |
 | `POST /bots/{botID}/tickets/{id}/close` | `bot:config` | بستن |
 
 ## Dating
