@@ -21,6 +21,7 @@ type Config struct {
 	RendererURL        string
 	OpsBotToken        string
 	OpsChannelID       string
+	OpsReportToken     string
 }
 
 func Load() (*Config, error) {
@@ -56,6 +57,7 @@ func Load() (*Config, error) {
 		RendererURL:        os.Getenv("RENDERER_URL"),
 		OpsBotToken:        os.Getenv("OPS_BOT_TOKEN"),
 		OpsChannelID:       os.Getenv("OPS_CHANNEL_ID"),
+		OpsReportToken:     os.Getenv("OPS_REPORT_TOKEN"),
 	}
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")

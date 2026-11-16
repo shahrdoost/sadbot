@@ -249,10 +249,8 @@ func main() {
 	notifier := &runtimeNotifier{users: userRepo, mgr: runtimeMgr}
 	gameCreditor := payment.NewGameCreditor(pool, datingRepo)
 	paySvc := payment.NewService(paymentRepo, gameCreditor, gateway, notifier, cfg.PaymentCallbackURL)
-	paySvc.SetOpsChannel(
-		payment.NewOpsChannel(cfg.OpsBotToken, cfg.OpsChannelID, &botNamer{repo: botRepo}),
-		&userLookup{repo: userRepo},
-	)
+	opsChannel := payment.NewOpsChannel(cfg.OpsBotToken, cfg.OpsChannelID, &botNamer{repo: botRepo})
+	paySvc.SetOpsChannel(opsChannel, &userLookup{repo: userRepo})
 	go payment.NewSweeper(paySvc).Run(ctx)
 	eng.SetData("payments", paySvc)
 	eng.SetData("paymentRepo", paymentRepo)
@@ -463,6 +461,7 @@ func main() {
 		AuthH: authH, AdminsH: adminsH, BotsH: botsH, FinanceH: financeH,
 		TgAccountsH: tgAccountsH,
 		PaymentsH:   paymentsH,
+		OpsReportH:  handlers.NewOpsReportHandler(opsChannel, cfg.OpsReportToken),
 		ModerationH: moderationH,
 		PanelH:      panelH,
 		AdminOpsH:   adminOpsH,

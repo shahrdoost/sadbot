@@ -75,9 +75,8 @@ func (s *Sweeper) autoVerify(ctx context.Context) {
 			log.Printf("[payment] expire %s: %v", p.ID, err)
 			continue
 		}
-		if ok && s.svc.notifier != nil && p.UserID != nil {
-			s.svc.notifier.NotifyUser(p.BotID, *p.UserID,
-				"⏰ مهلت پرداخت شما تمام شد.\nاز بخش خرید سکه دوباره اقدام کن.")
+		if ok {
+			s.svc.reportFailure(ctx, &p, "مهلت پرداخت تمام شد (کاربر پرداخت را کامل نکرد)", true)
 		}
 	}
 }

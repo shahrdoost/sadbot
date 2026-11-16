@@ -183,13 +183,33 @@ func (s *Service) Hook(ctx context.Context, paymentID uuid.UUID, event string) e
 		if err != nil {
 			return err
 		}
-		if ok && s.notifier != nil && p.UserID != nil {
-			s.notifier.NotifyUser(p.BotID, *p.UserID,
-				"❌ پرداخت ناموفق بود.\nاز بخش خرید سکه دوباره اقدام کن.")
+		if ok {
+			s.reportFailure(ctx, p, "درگاه پرداخت را رد کرد", false)
 		}
 		return nil
 	}
 	return nil
+}
+
+// reportFailure tells the buyer and the operator that a payment did not go
+// through. The buyer message is optional (a panel-initiated refund has no
+// chat to reach); the operator post is what makes failures auditable.
+func (s *Service) reportFailure(ctx context.Context, p *domain.Payment, reason string, expired bool) {
+	if s.notifier != nil && p.UserID != nil {
+		text := "❌ پرداخت ناموفق بود.\nاز بخش خرید سکه دوباره اقدام کن."
+		if expired {
+			text = "⏰ مهلت پرداخت شما تمام شد.\nاز بخش خرید سکه دوباره اقدام کن."
+		}
+		s.notifier.NotifyUser(p.BotID, *p.UserID, text)
+	}
+	if s.ops == nil {
+		return
+	}
+	platform, telegramID := "", ""
+	if s.users != nil && p.UserID != nil {
+		platform, telegramID = s.users.PlatformOf(ctx, p.BotID, *p.UserID)
+	}
+	s.ops.PaymentFailed(ctx, p, platform, telegramID, reason)
 }
 
 // fulfill credits the user exactly once (CAS on pending→verified).

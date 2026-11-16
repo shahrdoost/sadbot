@@ -167,3 +167,31 @@ func TestThousandsGrouping(t *testing.T) {
 }
 
 func strptr(s string) *string { return &s }
+
+// A rejected payment must leave a trail: the buyer sees a message and the
+// operator sees the failure in the channel.
+func TestOpsChannelPostsOnRejectedPayment(t *testing.T) {
+	rec := &opsRecorder{}
+	store := newMemPayments()
+	svc := newOpsService(t, rec, store, newMemCoins())
+
+	botID := uuid.New()
+	userID := int64(7)
+	p, _ := svc.store.Create(context.Background(), &domain.Payment{
+		BotID: botID, UserID: &userID, AmountRials: 500_000,
+		Kind: KindCoinPackage, Gateway: "catroom", Status: "pending",
+		Coins: 5, PackageID: strptr("pkg_5"),
+	})
+
+	svc.reportFailure(context.Background(), p, "درگاه پرداخت را رد کرد", false)
+
+	posts := rec.recorded()
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d (want 1): %v", len(posts), posts)
+	}
+	for _, want := range []string{"پرداخت ناموفق", "50,000", "درگاه پرداخت را رد کرد"} {
+		if !strings.Contains(posts[0], want) {
+			t.Errorf("failure post missing %q:\n%s", want, posts[0])
+		}
+	}
+}

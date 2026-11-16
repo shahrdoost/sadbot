@@ -24,6 +24,9 @@ type Deps struct {
 	TgAccountsH *handlers.TelegramAccountsHandler
 	// PaymentsH may be nil when no gateway service is configured.
 	PaymentsH *handlers.PaymentsHandler
+	// OpsReportH relays other platforms' payment outcomes to the ops channel;
+	// nil when the channel is not configured.
+	OpsReportH *handlers.OpsReportHandler
 	// ModerationH serves confessions + support tickets per bot.
 	ModerationH *handlers.ModerationHandler
 	// PanelH serves dating user cards, broadcast, and discount codes.
@@ -51,6 +54,10 @@ func NewRouter(d Deps) http.Handler {
 	if d.PaymentsH != nil {
 		r.Get("/api/v1/payments/callback", d.PaymentsH.Callback)
 		r.Post("/api/v1/payments/gateway-hook", d.PaymentsH.GatewayHook)
+	}
+	// public path, bearer-token gate: other platforms report their payments
+	if d.OpsReportH != nil {
+		r.Post("/api/v1/ops/payment-report", d.OpsReportH.Report)
 	}
 
 	// everything below needs a valid JWT
