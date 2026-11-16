@@ -80,7 +80,7 @@ SSHPASS='<PASSWORD>' bash deploy/release.sh
 # ۰) تست‌ها (الزامی)
 bash deploy/preflight.sh
 
-# ۱) ارسال تغییرات (از ماشین محلی، از پشت ساکس)
+# ۱) ارسال تغییرات (ساکس ۱۰۸۰۸ اگر بالاست، وگرنه SSH مستقیم)
 rsync -a -e '<ssh wrapper>' --exclude .git --exclude node_modules \
   --exclude dist --exclude kpkchat --exclude .env \
   ./ root@212.87.199.140:/opt/sadbot/
@@ -88,6 +88,8 @@ rsync -a -e '<ssh wrapper>' --exclude .git --exclude node_modules \
 # ۲) build + up + health (روی سرور)
 cd /opt/sadbot && bash deploy/deploy.sh
 ```
+
+اگر `nc -z 127.0.0.1 10808` جواب نداد (ساکس خاموش)، `release.sh` را دور بزنید: rsync و ssh را با wrapper بدون ProxyCommand اجرا کنید؛ مسیر مستقیم در تست ۲۰۲۶-۱۱-۱۶ کار کرد. ترتیب «preflight → rsync → `deploy.sh` روی سرور» همان است و گیت تست داخل build دست‌نخورده می‌ماند.
 
 `deploy.sh`: `docker compose build` (تست‌ها داخل build اجرا می‌شوند) → `up -d` → انتظار health از `http://127.0.0.1:8085/api/health` → نمایش وضعیت کانتینرها.
 
@@ -144,6 +146,7 @@ cat deploy/e2e/explore_bots.py | /tmp/sb-ssh root@212.87.199.140 \
 | `explore_bots.py` | کاوشگر عمومی دکمه‌ها — هر دکمه را میفشارد، پاسخ/ویرایش کارت را ثبت میکند؛ کلیدواژه‌های خرید/برداشت/درگاه را skip میکند (`SAFE_SKIP`) |
 | `flow_dating.py` | جریان کامل دیتینگ (send-minimal: یک send در هر بخش، بقیه با callback) |
 | `flow_duel.py` | یک راند کامل سنگ‌کاغذ‌قیچی: بازی → حرکت → نتیجه → تبدیل/برداشت → رتبه‌بندی |
+| `live_cross_platform.py` | مچ و رلهٔ دوطرفهٔ تلگرام↔کت: `/start` → «🔗 غریبه» → انتظار «وصلت انجام شد» → متن → **PNG واقعی** با `send_file(..., force_document=False)` (پی‌لود جعلی به‌صورت document تحویل می‌شود و شاخهٔ عکس را رد می‌کند). کاربر کت باید از قبل در صف باشد؛ نتیجه را در `bot_user_events` و فید پنل چک کنید |
 | `scratchpad/e2e_nav_check.py` | nav-escape هدفمند @ashnadbot: برچسب‌های منوی home باید از promptهای ویرایش پروفایل (سن/نام) فرار کنند — اثبات زندهٔ رفع‌باگ ۲۰۲۶-۱۰-۲۶ |
 
 نکات: session اکانت داخل کانتینر قفل است — اسکریپت‌ها اول `cp /data/sessions/<id>.session /tmp/` میکنند (کانتینر هنگام recreate ولوم `/tmp` را پاک میکند). callback data دکمه‌ها `act:*` است اما موتور پیشوند را قبل از `HandleAction` میبرد (باگ رفع‌شدهٔ ۲۰۲۶-۱۰-۲۶ — همهٔ دکمه‌های inline بازی‌ها مرده بودند). `explore_bots.py` پیام‌های خروجی خودمان را نادیده میگیرد و ویرایش کارت‌ها را با diff اسنپ‌شات تشخیص میدهد.

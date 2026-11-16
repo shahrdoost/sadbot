@@ -29,6 +29,8 @@ admins ──< admin_bot_access >── bots ──< bot_configs (1:1)
 
 telegram_accounts (MTProto)
 content_posts (content ledger)
+support_tickets ──< support_ticket_messages
+outbound_retries (cross-platform retry queue)
 audit_logs
 ```
 
@@ -107,6 +109,9 @@ audit_logs
 
 ### `dating_likes`
 `kind` (`like`|`super`|`pass`)
+
+### `outbound_retries` — صف ماندگار ارسال بین‌پلتفرمی (migration 0016)
+`kind` (`text`\|`photo`\|`match`), `platform`, `chat_id`, `target` (متن، یا file_id مبدأ برای عکس), `source_platform`, `attempts` (سقف ۵), `next_at`, `last_error`. ایندکس جزئی `WHERE attempts < 5` روی `next_at`. ردیف در موفقیت (و در رسیدن به سقف) حذف می‌شود.
 
 ## بازی‌ها (migration 0011 + 0012)
 

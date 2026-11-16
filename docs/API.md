@@ -123,7 +123,7 @@
 |---|---|---|
 | `GET /bots/{botID}/admin/chats` | `bot:read` | چت‌های فعال |
 | `GET /bots/{botID}/admin/chats/transcript` | `bot:read` | متن چت |
-| `GET /bots/{botID}/admin/messages` | `bot:read` | فید پیام‌ها |
+| `GET /bots/{botID}/admin/messages` | `bot:read` | فید پیام‌های چت — یک سطر برای هر پیام: `name` (دریافتی) + `partner_name` (ارسالی، از آینهٔ outbound؛ برای عکس هم پر می‌شود) |
 | `GET /bots/{botID}/admin/ai` | `bot:read` | کاربران AI |
 | `GET /bots/{botID}/admin/ai/users/{userID}` | `bot:read` | تاریخچه AI |
 | `PUT /bots/{botID}/admin/ai` | `bot:config` | فعال/غیرفعال AI |
