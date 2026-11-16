@@ -1,6 +1,6 @@
 # اسکیمای دیتابیس
 
-> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0014_dating_deactivated`
+> PostgreSQL 16 — مایگریشن‌ها: `backend/migrations/0001_init` تا `0016_outbound_retries`
 > قواعد کلی:
 > - پول: `BIGINT` (هرگز float)؛ نمایش تومان در UI (÷۱۰).
 > - هر سطر bot-scoped دارای `bot_id UUID` با FK به `bots` (`ON DELETE CASCADE`).
@@ -210,6 +210,8 @@ audit_logs
 | 0012 | more_bots | favaani_*، shlinks_*، whoseeme_*، faal_*، anonychat_*، tapearn_* |
 | 0013 | kat_platform | پلتفرم کت (cr0.ir): `bots.kat_token_encrypted/kat_username`، `platform` روی `bot_end_users` و `dating_profiles`، UNIQUE سه‌تایی هویت |
 | 0014 | dating_deactivated | `dating_profiles.deactivated_at` — حذف نرم (۳ سکه)؛ کاربر غیرفعال از دکهٔ مرور/مچ حذف میشود (auto-applied at boot) |
+| 0015 | ticket_thread | `support_ticket_messages` — گفتگوی تیکت پشتیبانی (هر نوبت کاربر/ادمین)؛ پاسخ‌های قدیمی به رشته backfill می‌شوند |
+| 0016 | outbound_retries | صف ماندگار ارسال بین‌پلتفرمی: `kind` (`text`\|`photo`\|`match`)، `platform`/`chat_id`، `target` (متن یا file_id مبدأ)، `source_platform`، `attempts`/`next_at` — ری‌استارت صف را پاک نمی‌کند |
 
 ## الگوهای اتمیک
 

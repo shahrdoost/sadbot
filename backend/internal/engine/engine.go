@@ -61,6 +61,11 @@ type UserStore interface {
 type Router interface {
 	SendPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, text string, kbd json.RawMessage, replyTo int64) (*telegram.Message, error)
 	ForwardMediaPlatform(ctx context.Context, botID uuid.UUID, platform string, fromChatID, toChatID, messageID int64) (*telegram.Message, error)
+	// SendPhotoPlatform delivers a photo to a chat on `platform`. fileID is a
+	// file_id the TARGET platform can render; when the two endpoints issue
+	// unrelated file_ids the caller fetches the bytes from the source side and
+	// passes "" — the runtime then uploads them.
+	SendPhotoPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, fileID, caption string, image []byte) (*telegram.Message, error)
 }
 
 type EventStore interface {
@@ -570,6 +575,27 @@ func (bc *BotContext) sendToPlatformFull(platform string, chatID int64, text str
 		return nil, err
 	}
 	return bc.router.SendPlatform(context.Background(), botID, platform, chatID, text, kbd, replyTo)
+}
+
+// SendPhotoToPlatform delivers a photo to a chat on a specific platform. A
+// cross-platform target receives the uploaded bytes: Kat has no
+// forwardMessage, and each endpoint issues file_ids the other cannot resolve.
+func (bc *BotContext) SendPhotoToPlatform(platform string, chatID int64, fileID string, image []byte, caption string) (*telegram.Message, error) {
+	if platform == bc.Platform {
+		ps, ok := bc.Sender.(PhotoSender)
+		if !ok {
+			return nil, ErrMediaUnsupported
+		}
+		return ps.SendPhoto(context.Background(), chatID, fileID, caption, nil)
+	}
+	if bc.router == nil {
+		return nil, errors.New("cross-platform photo: no router configured")
+	}
+	botID, err := uuid.Parse(bc.BotID)
+	if err != nil {
+		return nil, err
+	}
+	return bc.router.SendPhotoPlatform(context.Background(), botID, platform, chatID, fileID, caption, image)
 }
 
 // ForwardMediaToPlatform relays media to a chat on a specific platform.

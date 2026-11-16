@@ -497,6 +497,21 @@ func (m *Manager) ForwardMediaPlatform(ctx context.Context, botID uuid.UUID, pla
 	return client.ForwardMedia(ctx, fromChatID, toChatID, messageID)
 }
 
+// SendPhotoPlatform implements engine.Router for cross-platform photo relays.
+// Kat has no forwardMessage, and a file_id minted by one endpoint is not
+// resolvable on the other, so the caller uploads the source bytes and the
+// target side receives a fresh upload.
+func (m *Manager) SendPhotoPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, fileID, caption string, image []byte) (*telegram.Message, error) {
+	client, ok := m.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("%w: bot %s on %s", engine.ErrPlatformDown, botID, platform)
+	}
+	if len(image) > 0 {
+		return client.SendPhotoUpload(ctx, chatID, "photo.jpg", image, caption)
+	}
+	return client.SendPhoto(ctx, telegram.SendPhotoPayload{ChatID: chatID, Photo: fileID, Caption: caption})
+}
+
 type outgoing struct {
 	chatID int64
 	text   string

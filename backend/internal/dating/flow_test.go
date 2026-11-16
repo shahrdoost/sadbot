@@ -343,6 +343,11 @@ type browseEnv struct {
 	prices map[string]any
 	// platform per sender; defaults to "telegram", cross-platform tests set kat.
 	platA, platB string
+	// photo relay fixtures: bytes available per "platform:fileID" and the
+	// fetch attempts made (cross-platform photo tests)
+	photos     map[string][]byte
+	fetchCalls []string
+	fetchErr   error
 }
 
 func newBrowseEnv(t *testing.T) *browseEnv {
@@ -386,6 +391,18 @@ func newBrowseEnv(t *testing.T) *browseEnv {
 	eng.SetData("moderationRepo", mod)
 	env.eng = eng
 	eng.SetData("pricesof", func(string) map[string]any { return env.prices })
+	// cross-platform photo relay resolves the source file_id to bytes
+	env.photos = map[string][]byte{}
+	eng.SetData("photoFetcher", PhotoFetcher(func(_ context.Context, _ uuid.UUID, platform, fileID string) ([]byte, string, error) {
+		env.fetchCalls = append(env.fetchCalls, platform+":"+fileID)
+		if env.fetchErr != nil {
+			return nil, "", env.fetchErr
+		}
+		if b, ok := env.photos[platform+":"+fileID]; ok {
+			return b, "photo.jpg", nil
+		}
+		return nil, "", fmt.Errorf("unknown file %s on %s", fileID, platform)
+	}))
 	return env
 }
 

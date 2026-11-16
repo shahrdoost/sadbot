@@ -168,6 +168,18 @@ func main() {
 	eng.SetData("moderationRepo", moderationRepo)
 
 	runtimeMgr := runtime.NewManager(eng, botRepo, userRepo, botRepo)
+
+	// cross-platform photo relay: resolve the file_id on the side that owns it,
+	// so the partner's endpoint can receive a fresh upload (Kat has no
+	// forwardMessage and cannot resolve a Telegram file_id).
+	eng.SetData("photoFetcher", datingpkg.PhotoFetcher(
+		func(c context.Context, botID uuid.UUID, platform, fileID string) ([]byte, string, error) {
+			client, ok := runtimeMgr.ClientForPlatform(botID, platform)
+			if !ok {
+				return nil, "", fmt.Errorf("%w: bot %s on %s", engine.ErrPlatformDown, botID, platform)
+			}
+			return client.DownloadFileByFileID(c, fileID)
+		}))
 	runtime.ConfigureTokenDecryptor(func(b *domain.Bot, platform string) (string, error) {
 		if platform == domain.PlatformKat {
 			return pgcrypto.DecryptToken(cfg.TokenEncryptionKey, b.KatTokenEncrypted)
@@ -211,6 +223,13 @@ func main() {
 	}
 	matcher.SetTextsFunc(textsOf)
 	go matcher.Run(ctx)
+
+	// durable cross-platform retry queue: survives a redeploy, so a relay that
+	// failed because a platform side was down is redelivered afterwards
+	outboundRepo := postgres.NewOutboundRetryRepo(pool)
+	durableQueue := datingpkg.NewDurableQueue(outboundRepo, durableSender{mgr: runtimeMgr})
+	eng.SetData("durableQueue", durableQueue)
+	go durableQueue.Run(ctx)
 
 	// re-engagement notifications (30m tick, hard caps 2/day + 8h gap + night quiet)
 	go datingpkg.NewNotificationService(datingStore, botRepo,
@@ -476,6 +495,40 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// durableSender adapts the runtime manager to the dating retry queue: deliver
+// text/photo on a platform, and fetch a photo's bytes on the side that owns it.
+type durableSender struct{ mgr *runtime.Manager }
+
+func (d durableSender) SendPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, text string, kbd []byte, _ int64) (*telegram.Message, error) {
+	client, ok := d.mgr.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("%w: bot %s on %s", engine.ErrPlatformDown, botID, platform)
+	}
+	return client.SendMessage(ctx, telegram.SendMessagePayload{
+		ChatID: chatID, Text: text, ReplyMarkup: json.RawMessage(kbd),
+	})
+}
+
+func (d durableSender) SendPhotoPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, fileID, caption string, image []byte) (*telegram.Message, error) {
+	client, ok := d.mgr.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("%w: bot %s on %s", engine.ErrPlatformDown, botID, platform)
+	}
+	if len(image) > 0 {
+		return client.SendPhotoUpload(ctx, chatID, "photo.jpg", image, caption)
+	}
+	return client.SendPhoto(ctx, telegram.SendPhotoPayload{ChatID: chatID, Photo: fileID, Caption: caption})
+}
+
+func (d durableSender) FetchPhoto(ctx context.Context, botID uuid.UUID, platform, fileID string) ([]byte, error) {
+	client, ok := d.mgr.ClientForPlatform(botID, platform)
+	if !ok {
+		return nil, fmt.Errorf("%w: bot %s on %s", engine.ErrPlatformDown, botID, platform)
+	}
+	img, _, err := client.DownloadFileByFileID(ctx, fileID)
+	return img, err
 }
 
 // runtimeNotifier sends payment-result messages via a running bot.

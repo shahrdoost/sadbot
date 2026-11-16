@@ -17,6 +17,14 @@ type fakeRouter struct {
 	tg, kat  *fakeSender
 	sends    []routedSend
 	forwards []routedForward
+	photos   []routedPhoto
+}
+
+type routedPhoto struct {
+	Platform string
+	ChatID   int64
+	FileID   string
+	Bytes    int
 }
 
 type routedSend struct {
@@ -48,6 +56,15 @@ func (r *fakeRouter) ForwardMediaPlatform(ctx context.Context, botID uuid.UUID, 
 		dest = r.kat
 	}
 	return dest.ForwardMedia(ctx, fromChatID, toChatID, messageID)
+}
+
+func (r *fakeRouter) SendPhotoPlatform(ctx context.Context, botID uuid.UUID, platform string, chatID int64, fileID, caption string, image []byte) (*telegram.Message, error) {
+	r.photos = append(r.photos, routedPhoto{Platform: platform, ChatID: chatID, FileID: fileID, Bytes: len(image)})
+	dest := r.tg
+	if platform == domain.PlatformKat {
+		dest = r.kat
+	}
+	return dest.SendPhoto(ctx, chatID, fileID, caption, nil)
 }
 
 func (r *fakeRouter) lastTo(platform string, chatID int64) *routedSend {
@@ -117,18 +134,23 @@ func TestCrossPlatformChatRelay(t *testing.T) {
 		t.Fatalf("A (telegram) did not receive B's reply: %+v", e.sendA.sent)
 	}
 
-	// --- media rides the same cross-platform path ---
+	// --- media does NOT ride forwardMessage across platforms ---
+	// Kat has no forwardMessage and cannot resolve a Telegram file_id, so a
+	// photo is carried by value (covered in cross_platform_photo_test.go).
+	// A sticker stays unsupported rather than silently disappearing.
+	// --- a photo crosses by value, never by forwardMessage ---
 	router.forwards = nil
+	router.photos = nil
+	e.photos["telegram:photo-x"] = []byte("jpeg-bytes")
 	e.feedMedia(t, e.sendA, &telegram.Message{
 		MessageID: 777,
 		Photo:     []telegram.PhotoSize{{FileID: "photo-x", Width: 90, Height: 90}},
 	})
-	if len(router.forwards) != 1 {
-		t.Fatalf("expected 1 routed forward, got %+v", router.forwards)
+	if len(router.forwards) != 0 {
+		t.Fatalf("cross-platform photo must not use forwardMessage: %+v", router.forwards)
 	}
-	f := router.forwards[0]
-	if f.Platform != domain.PlatformKat || f.ToChatID != 222 || f.FromChat != 111 || f.MessageID != 777 {
-		t.Fatalf("forward routed wrong: %+v", f)
+	if len(router.photos) != 1 || router.photos[0].Platform != domain.PlatformKat {
+		t.Fatalf("cross-platform photo must upload to the kat partner: %+v", router.photos)
 	}
 
 	// --- A ends the chat → rating prompt must reach B on kat ---
@@ -147,8 +169,10 @@ func TestCrossPlatformChatRelay(t *testing.T) {
 }
 
 // TestCrossPlatformMediaDegrades: Kat's Bot API subset has no forwardMessage.
-// A media relay to a Kat partner must show the degrade notice and keep the
-// chat alive instead of force-ending it as "partner unreachable".
+// Media the endpoints cannot carry (sticker/voice/video/file) must show the
+// degrade notice and keep the chat alive instead of force-ending it.
+// (Photos are not degraded — they are carried by value; see
+// cross_platform_photo_test.go.)
 func TestCrossPlatformMediaDegrades(t *testing.T) {
 	e := newBrowseEnv(t)
 	e.platB = domain.PlatformKat
@@ -161,11 +185,11 @@ func TestCrossPlatformMediaDegrades(t *testing.T) {
 
 	e.feedMedia(t, e.sendA, &telegram.Message{
 		MessageID: 901,
-		Photo:     []telegram.PhotoSize{{FileID: "photo-d", Width: 90, Height: 90}},
+		Voice:     json.RawMessage(`{"file_id":"voice-d"}`),
 	})
 
-	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "فقط متن") {
-		t.Fatalf("A must get the degrade notice, got: %+v", e.sendA.sent)
+	if msg := e.sendA.lastTo(111); msg == nil || !contains(msg.Text, "عکس و متن") {
+		t.Fatalf("A must get the degrade notice, got: %+v", e.sendA.lastTo(111))
 	}
 	pA, _ := e.store.ProfileByTelegram(ctx, e.botID, domain.PlatformTelegram, 111)
 	pB, _ := e.store.ProfileByTelegram(ctx, e.botID, domain.PlatformKat, 222)

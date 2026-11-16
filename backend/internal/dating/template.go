@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"sadbot/internal/domain"
 	"sadbot/internal/engine"
@@ -18,6 +19,16 @@ import (
 )
 
 func engineBG() context.Context { return context.Background() }
+
+// PhotoFetcher resolves a file_id on `platform` to the file bytes (:source own
+// endpoint). Injected by main so the dating template can carry a cross-platform
+// photo by value. Returns the bytes, a filename (may be empty), and an error.
+type PhotoFetcher func(ctx context.Context, botID uuid.UUID, platform, fileID string) ([]byte, string, error)
+
+func photoFetcherOf(bc *engine.BotContext) PhotoFetcher {
+	f, _ := bc.Data["photoFetcher"].(PhotoFetcher)
+	return f
+}
 
 // Template is the Go port of kpkchat's dating chat core
 // (onboarding, quick search, anonymous chat, rating, block).
@@ -946,11 +957,20 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 		return true
 	}
 
+	// A photo crossing platforms never uses forwardMessage: the two endpoints
+	// issue file_ids the other cannot resolve, and Kat has no forwardMessage at
+	// all. Carry it by value from the start rather than attempting a forward
+	// that is guaranteed to fail on one side.
+	if partnerPlatform != bc.Platform && msg.MediaType() == "photo" {
+		relayCrossPlatformPhoto(bc, st, botID, partnerPlatform, partnerTelegram, msg)
+		return true
+	}
+
 	if _, err := bc.ForwardMediaToPlatform(partnerPlatform, partnerTelegram, bc.ChatID, msg.MessageID); err != nil {
 		switch {
 		case errors.Is(err, engine.ErrMediaUnsupported):
-			// Kat subset can't copy media — degrade, never kill the chat
-			bc.Reply("فقط متن منتقل میشه؛ رسانه در دسترس نیست.")
+			// Kat subset can't copy stickers/video/files — degrade, keep the chat
+			bc.Reply("فقط عکس و متن منتقل میشه؛ این نوع رسانه در کت پشتیبانی نمیشه.")
 		case errors.Is(err, engine.ErrPlatformDown):
 			// partner's side is flapping: park the forward, keep the chat
 			bc.Reply("رسانه ثبت شد و به‌محض برگشتن مخاطب ارسال میشه 🙌")
@@ -969,6 +989,83 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 	// keep the transcript complete: the engine never logs media updates
 	bc.RecordInbound(label, map[string]any{"media": msg.MediaType()})
 	return true
+}
+
+// relayCrossPlatformPhoto carries a photo across platforms by value: the source
+// side resolves the file_id to bytes, the target side uploads them as a new
+// photo. A transient failure parks a self-contained retry in the queue.
+func relayCrossPlatformPhoto(bc *engine.BotContext, st *Store, botID uuid.UUID,
+	partnerPlatform string, partnerTelegram int64, msg *telegram.Message) {
+	fileID := msg.PhotoFileID()
+	if fileID == "" {
+		bc.Reply("این عکس رو نتونستم منتقل کنم؛ دوباره بفرست.")
+		return
+	}
+	fetch := photoFetcherOf(bc)
+	if fetch == nil {
+		bc.Reply("فقط متن منتقل میشه؛ عکس در دسترس نیست.")
+		return
+	}
+
+	// A storage endpoint may need a moment to publish the bytes the update just
+	// announced — give the download a couple of tries before parking the job.
+	var (
+		image []byte
+		err   error
+	)
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		image, _, err = fetch(context.Background(), botID, bc.Platform, fileID)
+		if err == nil && len(image) > 0 {
+			break
+		}
+	}
+	if err != nil || len(image) == 0 {
+		// park it: the download itself is retried by the queue, and the upload
+		// after it, so a flapping source side does not lose the picture
+		bc.Reply("عکس ثبت شد و به‌محض آماده شدن ارسال میشه 🙌")
+		parkDurablePhoto(bc, botID, partnerPlatform, partnerTelegram, fileID)
+		return
+	}
+
+	if _, err := bc.SendPhotoToPlatform(partnerPlatform, partnerTelegram, "", image, ""); err != nil {
+		if errors.Is(err, engine.ErrPlatformDown) || !relayPermanent(err) {
+			bc.Reply("عکس ثبت شد و به‌محض برگشتن مخاطب ارسال میشه 🙌")
+			parkDurablePhoto(bc, botID, partnerPlatform, partnerTelegram, fileID)
+			return
+		}
+		forceEndToRating(bc, st, botID, "partner_unreachable")
+		return
+	}
+	bc.RecordInbound("📸 عکس", map[string]any{"media": "photo"})
+}
+
+// parkDurablePhoto queues a cross-platform photo for retry that survives a
+// restart. Falls back to the in-process queue when no durable queue is wired.
+func parkDurablePhoto(bc *engine.BotContext, botID uuid.UUID, platform string, chatID int64, fileID string) {
+	if q := durableQueueOf(bc); q != nil {
+		q.Enqueue(context.Background(), botID, "photo", platform, chatID, fileID, bc.Platform)
+		return
+	}
+	enqueuePending("photo:"+botID.String()+":"+fileID,
+		sendWithBudget(func(c context.Context) (*telegram.Message, error) {
+			fetch := photoFetcherOf(bc)
+			if fetch == nil {
+				return nil, engine.ErrPlatformDown
+			}
+			img, _, ferr := fetch(c, botID, bc.Platform, fileID)
+			if ferr != nil || len(img) == 0 {
+				return nil, ferr
+			}
+			return bc.SendPhotoToPlatform(platform, chatID, "", img, "")
+		}), nil)
+}
+
+func durableQueueOf(bc *engine.BotContext) *DurableQueue {
+	q, _ := bc.Data["durableQueue"].(*DurableQueue)
+	return q
 }
 
 func handleChat(bc *engine.BotContext, st *Store, text string) bool {
@@ -1058,6 +1155,10 @@ func handleChat(bc *engine.BotContext, st *Store, text string) bool {
 			// partner's side is down (restarting/flapping): park the text and
 			// answer back — the chat STAYS alive, delivery is our problem
 			bc.Reply("پیامت برای مخاطب ثبت شد و به‌محض برگشتن ارسال میشه. چت از همین‌جا ادامه داره 🙌")
+			// durable first: a redeploy during the outage must not lose it
+			if q := durableQueueOf(bc); q != nil {
+				q.Enqueue(ctx, botID, "text", partnerPlatform, partnerTelegram, text, "")
+			}
 		} else if relayPermanent(err) {
 			forceEndToRating(bc, st, botID, "partner_unreachable")
 			return true
