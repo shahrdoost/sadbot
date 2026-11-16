@@ -48,6 +48,20 @@ type Service struct {
 	notifier    Notifier
 	callbackURL string
 	notifyURL   string
+	ops         *OpsChannel
+	users       UserLookup
+}
+
+// UserLookup resolves who paid, for the ops channel post.
+type UserLookup interface {
+	PlatformOf(ctx context.Context, botID uuid.UUID, userID int64) (platform, telegramID string)
+}
+
+// SetOpsChannel attaches the operator notification channel. Optional: when
+// unset, settlement is silent outside the buyer's own chat.
+func (s *Service) SetOpsChannel(ops *OpsChannel, users UserLookup) {
+	s.ops = ops
+	s.users = users
 }
 
 // deriveNotifyURL is where the gateway POSTs verified/failed events, so
@@ -208,6 +222,13 @@ func (s *Service) fulfill(ctx context.Context, paymentID uuid.UUID) error {
 	if err != nil {
 		log.Printf("[payment] fulfill %s kind=%s: %v", paymentID, p.Kind, err)
 		return err
+	}
+	if s.ops != nil {
+		platform, telegramID := "", ""
+		if s.users != nil {
+			platform, telegramID = s.users.PlatformOf(ctx, p.BotID, *p.UserID)
+		}
+		s.ops.PaymentSettled(ctx, p, platform, telegramID)
 	}
 	if s.notifier != nil {
 		text := fmt.Sprintf("✅ پرداخت تایید شد!\n+%d سکه به حسابت اضافه شد.", p.Coins)

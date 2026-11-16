@@ -19,6 +19,8 @@ type Config struct {
 	TGSidecarKey       string
 	PaymentCallbackURL string
 	RendererURL        string
+	OpsBotToken        string
+	OpsChannelID       string
 }
 
 func Load() (*Config, error) {
@@ -52,6 +54,8 @@ func Load() (*Config, error) {
 		TGSidecarKey:       os.Getenv("TGSIDECAR_KEY"),
 		PaymentCallbackURL: os.Getenv("PAYMENT_CALLBACK_URL"),
 		RendererURL:        os.Getenv("RENDERER_URL"),
+		OpsBotToken:        os.Getenv("OPS_BOT_TOKEN"),
+		OpsChannelID:       os.Getenv("OPS_CHANNEL_ID"),
 	}
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")

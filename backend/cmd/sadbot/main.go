@@ -249,6 +249,10 @@ func main() {
 	notifier := &runtimeNotifier{users: userRepo, mgr: runtimeMgr}
 	gameCreditor := payment.NewGameCreditor(pool, datingRepo)
 	paySvc := payment.NewService(paymentRepo, gameCreditor, gateway, notifier, cfg.PaymentCallbackURL)
+	paySvc.SetOpsChannel(
+		payment.NewOpsChannel(cfg.OpsBotToken, cfg.OpsChannelID, &botNamer{repo: botRepo}),
+		&userLookup{repo: userRepo},
+	)
 	go payment.NewSweeper(paySvc).Run(ctx)
 	eng.SetData("payments", paySvc)
 	eng.SetData("paymentRepo", paymentRepo)
@@ -529,6 +533,32 @@ func (d durableSender) FetchPhoto(ctx context.Context, botID uuid.UUID, platform
 	}
 	img, _, err := client.DownloadFileByFileID(ctx, fileID)
 	return img, err
+}
+
+// botNamer feeds the operator payment channel a readable bot name.
+type botNamer struct{ repo *postgres.BotRepo }
+
+func (b *botNamer) BotName(ctx context.Context, botID uuid.UUID) string {
+	bot, err := b.repo.GetByID(ctx, botID)
+	if err != nil || bot == nil {
+		return ""
+	}
+	if bot.TelegramUsername != nil && *bot.TelegramUsername != "" {
+		return "@" + strings.TrimPrefix(*bot.TelegramUsername, "@")
+	}
+	return bot.Name
+}
+
+// userLookup tells the operator channel which platform the buyer used, which
+// matters because the same person can exist on Telegram and on Kat.
+type userLookup struct{ repo *postgres.BotUserRepo }
+
+func (u *userLookup) PlatformOf(ctx context.Context, botID uuid.UUID, userID int64) (string, string) {
+	user, err := u.repo.GetByID(ctx, botID, userID)
+	if err != nil || user == nil {
+		return "", ""
+	}
+	return user.Platform, fmt.Sprintf("%d", user.TelegramID)
 }
 
 // runtimeNotifier sends payment-result messages via a running bot.

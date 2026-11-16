@@ -52,6 +52,7 @@ SEED_ADMIN_PASSWORD=...        # رمز ادمین پنل
 TGSIDECAR_KEY=...              # کلید بک‌اند ↔ tgsidecar
 TG_API_ID / TG_API_HASH        # اپلیکیشن تلگرام (MTProto)
 PAYMENT_*                      # درگاه (PAYMENT_DEV_MODE برای تست)
+OPS_BOT_TOKEN / OPS_CHANNEL_ID # کانال گزارش پرداخت (خالی = خاموش)
 ```
 
 هیچ‌کدام از این اسرار در مخزن نیستند و نباید باشند.
