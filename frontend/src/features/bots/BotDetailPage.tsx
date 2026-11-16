@@ -835,22 +835,14 @@ function ChatsTab({ botId }: { botId: string }) {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {feed?.messages.map((m) => (
                 <tr key={m.event_id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
-                  <td className="px-3 py-2 w-48">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-medium text-xs">{m.username ? `@${m.username}` : m.name ?? '—'}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                        m.is_outbound
-                          ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                          : 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
-                      }`}>
-                        {m.is_outbound ? 'ارسالی' : 'دریافتی'}
+                  <td className="px-3 py-2 w-64">
+                    <div className="text-xs flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="text-green-600 dark:text-green-400 truncate">دریافتی: {name(m.name, m.username)}</span>
+                      <span className="text-slate-300 dark:text-slate-600 shrink-0">-</span>
+                      <span className="text-blue-600 dark:text-blue-400 truncate">
+                        ارسالی: {m.partner_user_id ? name(m.partner_name, m.partner_username) : '—'}
                       </span>
                     </div>
-                    {m.partner_user_id && (
-                      <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                        به/از {m.partner_username ? `@${m.partner_username}` : m.partner_name ?? `#${m.partner_user_id}`}
-                      </div>
-                    )}
                   </td>
                   <td className="px-3 py-2 text-sm">{m.text}</td>
                   <td className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap w-32">{formatDateFa(m.created_at)}</td>

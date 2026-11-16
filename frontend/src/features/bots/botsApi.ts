@@ -380,7 +380,6 @@ export interface ChatPreview {
   partner_username?: string
   text: string
   kind: string
-  is_outbound?: boolean
   created_at: string
 }
 

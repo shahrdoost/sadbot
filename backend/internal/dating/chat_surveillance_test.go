@@ -89,14 +89,20 @@ func TestChatSurveillance(t *testing.T) {
 	}
 
 	// --- global recent feed ---
-	// both directions are logged: each typed message = the sender's inbound
-	// event + the partner's outbound mirror (the panel feed shows both).
+	// one row per typed message: the sender's inbound event, with the partner
+	// resolved from their profile (the mirrored outbound rows stay out of the
+	// feed so each message is listed once, not twice).
 	feed, err := e.store.Repo().RecentChatMessages(ctx, e.botID, 50)
 	if err != nil {
 		t.Fatalf("RecentChatMessages: %v", err)
 	}
-	if len(feed) != 6 {
-		t.Fatalf("global feed must hold both directions of the 3 chat messages, got %d", len(feed))
+	if len(feed) != 3 {
+		t.Fatalf("global feed must hold each of the 3 chat messages once, got %d", len(feed))
+	}
+	for _, m := range feed {
+		if m.Kind != "inbound_message" {
+			t.Fatalf("feed must only carry inbound rows, got kind %q", m.Kind)
+		}
 	}
 	// newest first: the last thing said was A's farewell, the first was A's line
 	if !contains(feed[0].Text, "خداحافظ") {

@@ -1290,27 +1290,28 @@ func (r *DatingRepo) ChatTranscript(ctx context.Context, botID uuid.UUID, userA,
 	return out, rows.Err()
 }
 
-// ChatPreview is one recent chat-scene message for the global feed. Every
-// typed message is logged twice: the sender's inbound event plus the partner's
-// outbound mirror (RecordOutboundForPartner), so the panel feed shows both
-// directions of the conversation — IsOutbound marks the mirrored half.
+// ChatPreview is one recent chat-scene message for the global feed. The engine
+// logs every typed message exactly once — the sender's inbound event — and the
+// recipient is resolved from the sender's dating profile, so a single row
+// carries both sides of the exchange (sender + partner).
 type ChatPreview struct {
-	EventID       int64     `json:"event_id"`
-	UserID        int64     `json:"user_id"`
-	TelegramID    int64     `json:"telegram_id"`
-	Name          *string   `json:"name,omitempty"`
-	Username      *string   `json:"username,omitempty"`
-	PartnerID     *int64    `json:"partner_user_id,omitempty"`
-	PartnerName   *string   `json:"partner_name,omitempty"`
-	PartnerUser   *string   `json:"partner_username,omitempty"`
-	Text          string    `json:"text"`
-	Kind          string    `json:"kind"`
-	IsOutbound    bool      `json:"is_outbound"`
-	CreatedAt     time.Time `json:"created_at"`
+	EventID     int64     `json:"event_id"`
+	UserID      int64     `json:"user_id"`
+	TelegramID  int64     `json:"telegram_id"`
+	Name        *string   `json:"name,omitempty"`
+	Username    *string   `json:"username,omitempty"`
+	PartnerID   *int64    `json:"partner_user_id,omitempty"`
+	PartnerName *string   `json:"partner_name,omitempty"`
+	PartnerUser *string   `json:"partner_username,omitempty"`
+	Text        string    `json:"text"`
+	Kind        string    `json:"kind"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // RecentChatMessages is the global recent-message feed covering every chat
-// scene message, newest first. limit is capped at 200.
+// scene message, newest first. Only inbound events are read: the mirrored
+// outbound rows (RecordOutboundForPartner) would list the same message twice.
+// limit is capped at 200.
 func (r *DatingRepo) RecentChatMessages(ctx context.Context, botID uuid.UUID, limit int) ([]ChatPreview, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -1318,15 +1319,14 @@ func (r *DatingRepo) RecentChatMessages(ctx context.Context, botID uuid.UUID, li
 	rows, err := r.db.Query(ctx, `
 		SELECT e.id, e.user_id, u.telegram_id, dp.name, u.username,
 		       dp.partner_user_id, pp.name, pu.username,
-		       COALESCE(e.text, ''), e.kind,
-		       e.kind = 'outbound_message',
-		       e.created_at
+		       COALESCE(e.text, ''), e.kind, e.created_at
 		FROM bot_user_events e
 		JOIN bot_end_users u ON u.bot_id = e.bot_id AND u.id = e.user_id
 		LEFT JOIN dating_profiles dp ON dp.bot_id = e.bot_id AND dp.user_id = e.user_id
 		LEFT JOIN dating_profiles pp ON pp.bot_id = e.bot_id AND pp.user_id = dp.partner_user_id
 		LEFT JOIN bot_end_users pu ON pu.bot_id = e.bot_id AND pu.id = dp.partner_user_id
 		WHERE e.bot_id = $1
+		  AND e.kind = 'inbound_message'
 		  AND (e.meta->>'scene' = 'chat')
 		ORDER BY e.created_at DESC
 		LIMIT $2`,
@@ -1340,7 +1340,7 @@ func (r *DatingRepo) RecentChatMessages(ctx context.Context, botID uuid.UUID, li
 		var m ChatPreview
 		if err := rows.Scan(&m.EventID, &m.UserID, &m.TelegramID, &m.Name, &m.Username,
 			&m.PartnerID, &m.PartnerName, &m.PartnerUser,
-			&m.Text, &m.Kind, &m.IsOutbound, &m.CreatedAt); err != nil {
+			&m.Text, &m.Kind, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -1348,8 +1348,8 @@ func (r *DatingRepo) RecentChatMessages(ctx context.Context, botID uuid.UUID, li
 	return out, rows.Err()
 }
 
-// RecordOutboundForPartner logs a forwarded chat message on the partner's
-// side so the panel feed shows both directions of the conversation.
+// RecordOutboundForPartner logs the forwarded half of a chat message on the
+// partner's side, so the activity log counts outbound deliveries too.
 func (r *DatingRepo) RecordOutboundForPartner(ctx context.Context, botID uuid.UUID, partnerUserID int64, text string) error {
 	if len(text) > 1000 {
 		text = text[:1000]
