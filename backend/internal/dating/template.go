@@ -962,7 +962,7 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 	// all. Carry it by value from the start rather than attempting a forward
 	// that is guaranteed to fail on one side.
 	if partnerPlatform != bc.Platform && msg.MediaType() == "photo" {
-		relayCrossPlatformPhoto(bc, st, botID, partnerPlatform, partnerTelegram, msg)
+		relayCrossPlatformPhoto(bc, st, botID, partnerPlatform, partnerTelegram, *p.PartnerUserID, msg)
 		return true
 	}
 
@@ -995,7 +995,8 @@ func relayChatMedia(bc *engine.BotContext, msg *telegram.Message) bool {
 // side resolves the file_id to bytes, the target side uploads them as a new
 // photo. A transient failure parks a self-contained retry in the queue.
 func relayCrossPlatformPhoto(bc *engine.BotContext, st *Store, botID uuid.UUID,
-	partnerPlatform string, partnerTelegram int64, msg *telegram.Message) {
+	partnerPlatform string, partnerTelegram, partnerUserID int64, msg *telegram.Message) {
+	ctx := context.Background()
 	fileID := msg.PhotoFileID()
 	if fileID == "" {
 		bc.Reply("این عکس رو نتونستم منتقل کنم؛ دوباره بفرست.")
@@ -1040,6 +1041,10 @@ func relayCrossPlatformPhoto(bc *engine.BotContext, st *Store, botID uuid.UUID,
 		return
 	}
 	bc.RecordInbound("📸 عکس", map[string]any{"media": "photo"})
+	// mirror it on the partner's side: the panel feed pairs every inbound row
+	// with its delivery through this outbound event, so without it a relayed
+	// photo shows no recipient at all
+	_ = st.Repo().RecordOutboundForPartner(ctx, botID, partnerUserID, "📸 عکس")
 }
 
 // parkDurablePhoto queues a cross-platform photo for retry that survives a

@@ -59,6 +59,26 @@ func TestCrossPlatformPhotoGoesThrough(t *testing.T) {
 	if n := pendingCount(); n != 0 {
 		t.Fatalf("a successful photo must not stay queued, %d pending", n)
 	}
+
+	// the panel feed pairs each row with its delivery: a relayed photo must
+	// name the partner, exactly like a relayed text does
+	feed, err := e.store.Repo().RecentChatMessages(context.Background(), e.botID, 50)
+	if err != nil {
+		t.Fatalf("RecentChatMessages: %v", err)
+	}
+	var found bool
+	for _, row := range feed {
+		if !strings.Contains(row.Text, "عکس") {
+			continue
+		}
+		found = true
+		if row.PartnerName == nil || *row.PartnerName != "سارا" {
+			t.Fatalf("relayed photo must name the partner in the feed, got %+v", row)
+		}
+	}
+	if !found {
+		t.Fatalf("relayed photo missing from the panel feed: %+v", feed)
+	}
 }
 
 // TestCrossPlatformPhotoKatToTelegram: the same must work the other way round —
