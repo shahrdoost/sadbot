@@ -1311,20 +1311,38 @@ type ChatPreview struct {
 // RecentChatMessages is the global recent-message feed covering every chat
 // scene message, newest first. Only inbound events are read: the mirrored
 // outbound rows (RecordOutboundForPartner) would list the same message twice.
-// limit is capped at 200.
+//
+// The recipient comes from the mirror row, not dating_profiles.partner_user_id:
+// a chat clears partner_user_id on both profiles when it ends, so the profile
+// would leave the recipient of every past message blank. The mirror is the
+// record of who actually received the relay. limit is capped at 200.
 func (r *DatingRepo) RecentChatMessages(ctx context.Context, botID uuid.UUID, limit int) ([]ChatPreview, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	rows, err := r.db.Query(ctx, `
 		SELECT e.id, e.user_id, u.telegram_id, dp.name, u.username,
-		       dp.partner_user_id, pp.name, pu.username,
+		       m.user_id, mp.name, mu.username,
 		       COALESCE(e.text, ''), e.kind, e.created_at
 		FROM bot_user_events e
 		JOIN bot_end_users u ON u.bot_id = e.bot_id AND u.id = e.user_id
 		LEFT JOIN dating_profiles dp ON dp.bot_id = e.bot_id AND dp.user_id = e.user_id
-		LEFT JOIN dating_profiles pp ON pp.bot_id = e.bot_id AND pp.user_id = dp.partner_user_id
-		LEFT JOIN bot_end_users pu ON pu.bot_id = e.bot_id AND pu.id = dp.partner_user_id
+		LEFT JOIN LATERAL (
+		    SELECT o.user_id
+		    FROM bot_user_events o
+		    WHERE o.bot_id = e.bot_id
+		      AND o.kind = 'outbound_message'
+		      AND o.meta->>'scene' = 'chat'
+		      AND COALESCE(o.text, '') = COALESCE(e.text, '')
+		      AND COALESCE(e.text, '') <> ''
+		      AND o.user_id <> e.user_id
+		      AND o.created_at >= e.created_at
+		      AND o.created_at < e.created_at + interval '5 seconds'
+		    ORDER BY o.created_at, o.id
+		    LIMIT 1
+		) m ON true
+		LEFT JOIN dating_profiles mp ON mp.bot_id = e.bot_id AND mp.user_id = m.user_id
+		LEFT JOIN bot_end_users mu ON mu.bot_id = e.bot_id AND mu.id = m.user_id
 		WHERE e.bot_id = $1
 		  AND e.kind = 'inbound_message'
 		  AND (e.meta->>'scene' = 'chat')

@@ -88,6 +88,16 @@ func TestChatSurveillance(t *testing.T) {
 		t.Fatalf("swapped order must return the same messages: %d vs %d", len(rowsSwapped), len(rows))
 	}
 
+	// End the chat first: production reads the feed after conversations have
+	// finished, and ending clears partner_user_id on both profiles. The feed
+	// must still name the recipient of every past message.
+	if _, err := e.store.Repo().EndChat(ctx, e.botID, pA.UserID); err != nil {
+		t.Fatalf("EndChat A: %v", err)
+	}
+	if _, err := e.store.Repo().EndChat(ctx, e.botID, pB.UserID); err != nil {
+		t.Fatalf("EndChat B: %v", err)
+	}
+
 	// --- global recent feed ---
 	// one row per typed message: the sender's inbound event, with the partner
 	// resolved from their profile (the mirrored outbound rows stay out of the
@@ -111,8 +121,30 @@ func TestChatSurveillance(t *testing.T) {
 	if !contains(feed[len(feed)-1].Text, "حالت") {
 		t.Fatalf("feed must end with the oldest message: %+v", feed[len(feed)-1])
 	}
-	if feed[0].PartnerID == nil {
-		t.Fatal("feed rows must carry the partner id for drill-down")
+	// The recipient must resolve on every row: the panel renders
+	// "دریافتی: <sender> - ارسالی: <recipient>", and an empty recipient would
+	// blank half the line. Profiles do not help here — ending a chat clears
+	// partner_user_id on both — so this must come from the outbound mirror.
+	for _, m := range feed {
+		if m.PartnerID == nil {
+			t.Fatalf("feed row %d (%q) has no recipient", m.EventID, m.Text)
+		}
+		if m.PartnerName == nil || *m.PartnerName == "" {
+			t.Fatalf("feed row %d (%q) has recipient id but no name", m.EventID, m.Text)
+		}
+	}
+	// each row names the other party as recipient, and never itself
+	oldest := feed[len(feed)-1]
+	if *oldest.PartnerName != "سارا" {
+		t.Fatalf("A's message must name B as recipient, got %v", *oldest.PartnerName)
+	}
+	if *feed[1].PartnerName != "امیر" {
+		t.Fatalf("B's reply must name A as recipient, got %v", *feed[1].PartnerName)
+	}
+	for _, m := range feed {
+		if *m.PartnerID == m.UserID {
+			t.Fatalf("feed row %d names its own sender as recipient", m.EventID)
+		}
 	}
 }
 
